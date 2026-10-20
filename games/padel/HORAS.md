@@ -1,0 +1,8 @@
+# Registro de horas — Pádel (límite 8 h)
+
+Inicio de la prueba: 2026-10-20 10:39 UTC
+
+| Hito | Inicio (UTC) | Fin (UTC) | Duración | Notas |
+|---|---|---|---|---|
+| 0. GDD + setup Three.js | 10:39 | 10:41 | 0:02 | GDD, excepción en CLAUDE.md, Vite + three |
+| 1. Pista + personajes + punto con golpe | 10:41 | 10:55 | 0:14 | Física con Magnus/rebotes, reglas, IA, pausa táctica, impacto con deslizamiento. Probado con Playwright (plano/liftado/cortado/tarde), 0 errores |

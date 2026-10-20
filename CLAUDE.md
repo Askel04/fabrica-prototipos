@@ -8,6 +8,7 @@ Prototipos jugables en móvil lo más rápido posible. Si no divierte, se descar
 - Retrato 9:16, escala FIT, solo táctil (un dedo por defecto)
 - Guardado en localStorage
 - Publicación: Capacitor + AdMob (solo en fase de pulido)
+- **Excepción:** `games/padel/` usa Three.js + Vite (sin Phaser) porque es 3D. Mismo setup móvil que `template/` (retrato, táctil, localStorage).
 
 ## Flujo por juego
 1. Copiar `template/` a `games/<nombre>/`
