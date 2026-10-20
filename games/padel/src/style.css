@@ -29,7 +29,7 @@ html, body {
 #ui * { box-sizing: border-box; }
 
 .hint {
-  position: absolute; left: 0; right: 0; top: calc(var(--u) * 16);
+  position: absolute; left: 0; right: 0; top: calc(var(--u) * 24);
   text-align: center; font-weight: 800; font-size: calc(var(--u) * 4.6);
   text-shadow: 0 2px 0 #0008; pointer-events: none;
   padding: 0 calc(var(--u) * 4);
@@ -177,3 +177,24 @@ html, body {
   font-weight: 900; font-size: calc(var(--u) * 6); color: #fff;
   text-shadow: 0 calc(var(--u) * .6) 0 #0009;
 }
+
+.score .opp { text-align: center; color: #9fd3ff; font-size: calc(var(--u) * 2.8); margin-top: calc(var(--u) * .6); }
+.simgames {
+  position: absolute; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none;
+  font-weight: 800; font-size: calc(var(--u) * 5); text-shadow: 0 2px 0 #0008;
+}
+.oppcard {
+  position: absolute; left: 7%; right: 7%; top: 24%;
+  background: #0b1630e6; border: calc(var(--u) * .6) solid #ffcc33; border-radius: calc(var(--u) * 4);
+  padding: calc(var(--u) * 5) calc(var(--u) * 5) calc(var(--u) * 7);
+  display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 2.5); text-align: center;
+  animation: pop .4s ease-out;
+}
+.oppcard .tag { font-weight: 800; letter-spacing: .08em; color: #ffcc33; font-size: calc(var(--u) * 3.6); }
+.oppcard .nm { font-weight: 900; font-size: calc(var(--u) * 8); line-height: 1; text-wrap: balance; }
+.oppcard .ctx { font-weight: 800; color: #ffe066; }
+.oppcard .desc { font-size: calc(var(--u) * 4); opacity: .92; text-wrap: balance; }
+.oppcard .need { font-size: calc(var(--u) * 3.4); color: #9fd3ff; font-weight: 700; }
+.oppcard .btn { position: relative; margin-top: calc(var(--u) * 2); }
+
+.oppinfo { margin-top: calc(var(--u) * 2); font-weight: 800; color: #ffe066; text-shadow: 0 2px 0 #0006; }

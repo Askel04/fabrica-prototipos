@@ -102,6 +102,11 @@ export function findContact(path, outcome, recvSide, players, move, opts = {}) {
     }
   }
   if (!candidates.length) return null;
+  // Una situación guionizada puede imponer el tipo de golpe (p. ej. bandeja en vez de remate)
+  if (opts.pick) {
+    const forced = opts.pick(candidates);
+    if (forced) return forced;
+  }
   const pre = candidates.filter((c) => !c.bounced);
   const after = candidates.filter((c) => c.bounced);
   let pick = null;

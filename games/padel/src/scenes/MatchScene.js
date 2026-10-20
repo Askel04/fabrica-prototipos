@@ -9,6 +9,7 @@ import { analyzeStroke } from '../stroke.js';
 import { classify, buildShot } from '../shots.js';
 import { moveTeam, dodge, chaseExit } from '../ai.js';
 import { VolleyMode } from '../modes/VolleyMode.js';
+import { Opportunities } from '../modes/Opportunities.js';
 import { hitSound, bounceSound, glassSound, netSound, whiffSound, pointSound, whooshSound } from '../utils/sound.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -200,7 +201,17 @@ export class MatchScene {
     this.renderScore();
     this.volley = new VolleyMode(this);
     // ?volley abre directamente la volea defensiva (pruebas)
-    if (this.params.volley || new URLSearchParams(location.search).has('volley')) this.startVolleyDefense();
+    const qs = new URLSearchParams(location.search);
+    if (qs.has('opp') && !this.params.opp) {
+      const n = Number(qs.get('opp')) || 4;
+      this.params.opp = { n, need: Math.min(3, n), only: qs.get('sit')?.split(',') };
+    }
+    if (this.params.opp) {
+      // Partido por oportunidades: rival difícil de batir cuando el punto sigue
+      this.ai = { ...this.ai, ...C.OPP.AI };
+      this.opp = new Opportunities(this, this.params.opp);
+      this.opp.start();
+    } else if (this.params.volley || qs.has('volley')) this.startVolleyDefense();
     else this.startPoint();
   }
 
@@ -273,7 +284,7 @@ export class MatchScene {
     this.score.innerHTML = `<table>
       <tr class="g"><td>${serve(1)}${name[1]}</td><td class="gm">${m.games[1]}</td><td class="pt">${this.ptsLabel(1)}</td></tr>
       <tr class="r"><td>${serve(-1)}${name[-1]}</td><td class="gm">${m.games[-1]}</td><td class="pt">${this.ptsLabel(-1)}</td></tr>
-    </table>${golden ? '<div class="gold">PUNTO DE ORO</div>' : ''}`;
+    </table>${golden ? '<div class="gold">PUNTO DE ORO</div>' : ''}${this.opp ? `<div class="opp">Oportunidades ${this.oppLabel} · necesitas ${this.opp.need}</div>` : ''}`;
   }
 
   racketPoint(p) {
@@ -289,9 +300,8 @@ export class MatchScene {
   }
 
   // ---------- flujo del punto ----------
-  startPoint(secondServe = false) {
-    if (!secondServe) this.serveTry = 1;
-    this.phase = 'serve';
+  /** Deja la escena lista para un punto nuevo (sin colocar a nadie). */
+  resetPoint() {
     this.rally = 0;
     this.lastQ = 0;
     this.shot = null;
@@ -299,14 +309,23 @@ export class MatchScene {
     this.arrow.visible = false;
     this.ball.scale.setScalar(1);
     this.trailPos.length = 0;
+    this.trail.forEach((m) => (m.visible = false));
+    this.beam.visible = false;
     this.timeScale = 1;
     this.blendCamera(C.CAM_MAIN, 0.6);
     const all = [...this.team, ...this.rivals];
     all.forEach((p) => {
       p.target = null;
+      p.vel = { x: 0, z: 0 };
       p.celebrate = 0;
       p.idlePose();
     });
+  }
+
+  startPoint(secondServe = false) {
+    if (!secondServe) this.serveTry = 1;
+    this.phase = 'serve';
+    this.resetPoint();
     this.team[0].pos.set(-C.HOME_X, 0, C.HOME_BACK_Z);
     this.team[1].pos.set(C.HOME_X, 0, C.HOME_BACK_Z);
     this.rivals[0].pos.set(-C.HOME_X, 0, -C.HOME_BACK_Z);
@@ -332,6 +351,32 @@ export class MatchScene {
     } else {
       this.after(0.6, () => this.playerServe(idx, { x: hand.x, y: 1.1, z: bz }));
     }
+  }
+
+  /** Arranca una situación clave del partido por oportunidades. */
+  playSituation(sit) {
+    this.sit = sit;
+    if (sit.volley) return this.startVolleyDefense();
+    if (sit.serve) {
+      this.match.serveTeam = sit.serve;
+      return this.startPoint();
+    }
+    this.phase = 'serve';
+    this.serveTry = 1;
+    this.resetPoint();
+    sit.team.forEach(([x, z], i) => this.team[i].pos.set(x, 0, z));
+    sit.rivals.forEach(([x, z], i) => this.rivals[i].pos.set(x, 0, z));
+    const h = sit.hit;
+    const striker = this.rivals[h.idx];
+    this.ball.position.set(h.from.x, h.from.y, h.from.z);
+    const anim = C.SHOTS[h.family].anim;
+    this.after(0.8, () => {
+      striker.swing(anim);
+      this.after(swingDur(anim) * SWING_HIT_U, () => {
+        hitSound(0.5);
+        this.doHit(striker, { ...h.from }, { ...h.v }, h.spin, 0, h.family, { pick: sit.pick });
+      });
+    });
   }
 
   // Tu saque: la bota el que saca y se golpea con la misma mecánica
@@ -364,7 +409,7 @@ export class MatchScene {
       path, outcome, -hitter,
       recvTeam.map((p) => this.racketPoint(p)),
       { vmax: recvTeam[0].speed, accel: C.PLAYER_ACCEL, reaction: C.REACTION },
-      { mustBounce: !!opts.serve },
+      { mustBounce: !!opts.serve, pick: opts.pick },
     );
     this.rally++;
     const power = opts.power ?? 0.5;
@@ -492,11 +537,13 @@ export class MatchScene {
     if (reason === 'falta') reason = 'doble falta';
     const win = winner === 1;
     const m = this.match;
-    m.pts[winner]++;
-    m.totalPts[winner]++;
     let gameWon = false;
+    if (!this.opp) {
+      m.pts[winner]++;
+      m.totalPts[winner]++;
+    }
     // Sin ventaja: a 40-40 punto de oro, el siguiente gana
-    if (m.pts[winner] >= 4) {
+    if (!this.opp && m.pts[winner] >= 4) {
       gameWon = true;
       m.games[winner]++;
       m.pts[1] = 0;
@@ -540,6 +587,10 @@ export class MatchScene {
     }
     vibrate(win ? [30, 40, 60] : 60);
     (win ? this.team : this.rivals).forEach((p) => (p.celebrate = Math.max(p.celebrate, 1.2)));
+    if (this.opp) {
+      this.after(C.POINT_END_DELAY, () => this.opp.resolve(winner));
+      return;
+    }
     if (gameWon) {
       this.after(0.9, () => this.toast(win ? '¡JUEGO!' : 'Juego rival', `${m.games[1]} - ${m.games[-1]}`, win ? '#ffe066' : '#ff8a80'));
     }
@@ -551,9 +602,15 @@ export class MatchScene {
     this.after(C.POINT_END_DELAY + (gameWon ? 0.8 : 0), () => this.startPoint());
   }
 
-  endMatch(winner) {
+  endMatch(winner, extra = {}) {
     const m = this.match;
-    const result = { win: winner === 1, games: { ...m.games }, points: { ...m.totalPts } };
+    const o = extra.opportunities;
+    const result = {
+      win: winner === 1,
+      games: { ...m.games },
+      points: o ? { 1: o.won, [-1]: o.n - o.won } : { ...m.totalPts },
+      opportunities: o,
+    };
     if (this.params.onEnd) {
       this.params.onEnd(result);
       return;

@@ -34,7 +34,7 @@ Debe botar en campo rival antes de tocar cristal; se permite volear; por 3 = pun
 Rival golpea → congelar → apuntar + potencia → deslizar sobre la bola → ver la bola volar y el rival fallar o devolver.
 
 ## Bucle de sesión
-Partido al mejor de 3 juegos (~3–5 min) → resultado (marcador, monedas, XP) → mejorar stat → siguiente jornada.
+Partido por oportunidades (~3–5 min): un set a 6 juegos simulado en el que se juegan 3–5 puntos clave (10 situaciones: tu saque, resto, defensa con globo, opción de remate, bandeja/víbora, volea en la red tipo portero, salida de pared, ataque en la red, punto de oro, globo al fondo). Si no se gana a la primera, el punto sigue contra una IA difícil. Hay que ganar todas (rival 4–5★), todas menos 1 (3★) o todas menos 2 (1–2★). Después: resultado (marcador, monedas, XP) → mejorar stat → siguiente jornada.
 
 ## Meta
 Temporada de 5 partidos en liga; 3 stats con monedas (potencia, precisión, velocidad); energía (1 por partido, recarga con el tiempo); al acabar la temporada, oferta de un club mejor.

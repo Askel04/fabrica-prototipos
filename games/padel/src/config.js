@@ -167,6 +167,22 @@ export const CONFIG = {
     FOV: 70,
   },
 
+  // Partido por oportunidades
+  OPP: {
+    GAMES_BEFORE_FIRST: 2, // juegos simulados antes de la primera oportunidad
+    GAMES_BETWEEN: 1, // juegos simulados entre oportunidades
+    HOLD_CHANCE: 0.75, // en los juegos simulados, el que saca suele ganar
+    SIM_STEP: 0.28, // s reales por punto simulado
+    END_DELAY: 1.4,
+    AI: { missChance: 0.03, missChanceFastBall: 0.1, missPerfect: 0.12, missPerRally: 0.015, qMin: 0.65, qMax: 0.95 },
+  },
+  // Oportunidades por estrellas del rival (1-5) y cuántas puedes perder
+  oppFor(stars) {
+    const n = [3, 3, 4, 4, 5][Math.max(1, Math.min(5, stars)) - 1];
+    const slack = stars <= 2 ? 2 : stars === 3 ? 1 : 0;
+    return { n, need: n - slack };
+  },
+
   // Cámaras
   CAM_FOV: 50,
   CAM_MAIN: { pos: [0, 10, 17], look: [0, 0, -0.5] },

@@ -19,7 +19,9 @@ export class ResultScene {
     const box = el('div', 'result', ui);
     el('div', `big ${r.win ? 'w' : 'l'}`, box, r.win ? '¡VICTORIA!' : 'DERROTA');
     el('div', 'final', box, `<span class="g">TÚ</span> <b>${r.games[1]} - ${r.games[-1]}</b> <span class="r">RIVAL</span>
-      <small>Puntos ganados ${r.points[1]} · perdidos ${r.points[-1]}</small>`);
+      <small>${r.opportunities
+        ? `Oportunidades ganadas ${r.opportunities.won} de ${r.opportunities.n} (necesitabas ${r.opportunities.need})`
+        : `Puntos ganados ${r.points[1]} · perdidos ${r.points[-1]}`}</small>`);
     const coins = el('div', 'gain', box, `<span class="coin"></span>+<b>0</b>`);
     const xp = el('div', 'gain', box, `+<b>0</b> XP`);
     const pct = Math.round((state.xp / xpForNext(state.level)) * 100);

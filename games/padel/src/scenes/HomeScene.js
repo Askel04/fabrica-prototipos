@@ -56,6 +56,8 @@ export class HomeScene {
     const side = (row, cls) => `<div class="club ${cls}"><div class="nm">${row.name}</div>
       <div>${stars(row.stars)} <span class="pos">${position(row.name)}º</span></div></div>`;
     vs.innerHTML = `${side(me, 'me')}<div class="vsx">VS</div>${side(rival, 'rv')}`;
+    const op = C.oppFor(rival.stars);
+    el('div', 'oppinfo', box, `${op.n} oportunidades · necesitas ganar ${op.need}`);
 
     const rw = el('div', 'rewards', box);
     const coinsW = Math.round(M.COINS_WIN * L.mult), coinsL = Math.round(M.COINS_LOSE * L.mult);
@@ -81,6 +83,7 @@ export class HomeScene {
     app.go(MatchScene, {
       names: { 1: 'TÚ', [-1]: fx.rival.split(' ').reduce((a, w) => (w.length > a.length ? w : a), '').toUpperCase() },
       ai: M.aiFor(rival.stars),
+      opp: C.oppFor(rival.stars),
       rivalKit: kitFor(fx.rival),
       stats: { ...state.stats },
       onEnd: (result) => app.go(ResultScene, result),
