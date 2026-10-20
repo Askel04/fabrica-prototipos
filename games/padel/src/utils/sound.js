@@ -51,3 +51,19 @@ export function pointSound(win) {
   const notes = win ? [523, 659, 784] : [392, 330];
   notes.forEach((n, i) => setTimeout(() => beep(n, 0.14, 'square', 0.12), i * 110));
 }
+
+// Entrada en cámara lenta: barrido grave
+export function whooshSound() {
+  const c = ac();
+  const osc = c.createOscillator();
+  const g = c.createGain();
+  const t = c.currentTime;
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(420, t);
+  osc.frequency.exponentialRampToValueAtTime(90, t + 0.35);
+  g.gain.setValueAtTime(0.18, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  osc.connect(g).connect(c.destination);
+  osc.start(t);
+  osc.stop(t + 0.4);
+}

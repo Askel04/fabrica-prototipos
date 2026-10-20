@@ -5,7 +5,7 @@ import { simulate, sampleAt, solveShot } from '../physics.js';
 import { judge, findContact } from '../rules.js';
 import { buildCourt } from '../court.js';
 import { Player } from '../player.js';
-import { hitSound, bounceSound, glassSound, netSound, whiffSound, pointSound } from '../utils/sound.js';
+import { hitSound, bounceSound, glassSound, netSound, whiffSound, pointSound, whooshSound } from '../utils/sound.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -443,6 +443,11 @@ export class MatchScene {
     this.swipeCv.height = this.app.height;
     this.swipePts = null;
     this.hitDone = false;
+    // El personaje prepara el golpe y espera al deslizamiento
+    const kind = cp.y > C.SMASH_HEIGHT ? 'smash' : 'drive';
+    this.team[this.shot.contact.idx].swing(kind, 0.35);
+    vibrate(10);
+    whooshSound();
   }
 
   ringRadius() { return C.HIT_RING_FRAC * this.app.width; }
@@ -532,8 +537,8 @@ export class MatchScene {
     const side = offset * C.SIDESPIN_FROM_OFFSET;
     const kind = pos.y > C.SMASH_HEIGHT ? 'smash' : 'drive';
     const sol = solveShot(pos, target, this.shotSpeed(this.power, spin), spin, side, dev);
-    player.swing(kind);
-    player.swingT = 0.4;
+    player.swingKind = kind;
+    player.release();
     this.doHit(player, pos, sol.v, spin, side, kind);
     this.lastHit = { q, tErr, offset, spin, ang };
 
@@ -613,7 +618,7 @@ export class MatchScene {
         // No deslizó a tiempo: la bola pasa
         this.shot.contact.done = true;
         this.shot.contact.miss = true;
-        this.team[this.shot.contact.idx].swing('drive');
+        this.team[this.shot.contact.idx].release();
         whiffSound();
         this.toast('¡Tarde!', '', '#ff8a80');
         this.exitImpact();

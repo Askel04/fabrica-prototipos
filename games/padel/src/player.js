@@ -97,10 +97,14 @@ export class Player {
 
   moveTo(x, z) { this.target = { x, z }; }
 
-  swing(kind = 'drive') {
+  // hold: fracción del golpe donde se queda esperando (preparación en la fase de impacto)
+  swing(kind = 'drive', hold = null) {
     this.swingKind = kind;
     this.swingT = 0;
+    this.hold = hold;
   }
+
+  release() { this.hold = null; }
 
   update(dt) {
     // Desplazamiento
@@ -135,6 +139,7 @@ export class Player {
     // Golpe
     if (this.swingT >= 0) {
       this.swingT += dt / this.swingDur;
+      if (this.hold != null) this.swingT = Math.min(this.swingT, this.hold);
       const u = Math.min(1, this.swingT);
       const smash = this.swingKind === 'smash';
       // 0-0.35 preparación, 0.35-0.6 golpe, 0.6-1 terminación
