@@ -146,6 +146,27 @@ export const CONFIG = {
     qMax: 0.9,
   },
 
+  // Volea defensiva tipo portero
+  VOLLEY_DEF: {
+    PLANE_Z: 0.8, // plano de la pala (justo detrás de la red)
+    PADDLE_R: 0.3,
+    REACH: 0.38, // m desde el centro de la pala en que la bola queda bloqueada
+    MAX_X: 2.1,
+    MIN_Y: 0.6,
+    MAX_Y: 2.3,
+    TILT_SIDE: 0.75, // rad de inclinación lateral en los extremos
+    TILT_LOW: 1.1, // rad: abajo la pala queda más horizontal
+    STRIKER_Z: 8, // el rival remata desde el fondo
+    SMASH_H: 2.75,
+    AIM_X: 1.7, // zona a la que apunta el remate en el plano de la pala
+    AIM_Y: [1.0, 2.0],
+    SPEED: [21, 26], // m/s hacia ti
+    SLOWMO: 0.5,
+    COUNT_STEP: 1, // s por número de la cuenta atrás
+    CAM: { pos: [0, 1.7, 6.2], look: [0, 1.25, -4] },
+    FOV: 70,
+  },
+
   // Cámaras
   CAM_FOV: 50,
   CAM_MAIN: { pos: [0, 10, 17], look: [0, 0, -0.5] },

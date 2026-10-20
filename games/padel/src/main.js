@@ -63,7 +63,8 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-// ?match abre directamente un partido suelto (pruebas)
-app.go(new URLSearchParams(location.search).has('match') ? MatchScene : TitleScene);
+// ?match abre directamente un partido suelto; ?volley, la volea defensiva (pruebas)
+const qs = new URLSearchParams(location.search);
+app.go(qs.has('match') || qs.has('volley') ? MatchScene : TitleScene);
 requestAnimationFrame(loop);
 window.__padel = app; // para pruebas automáticas

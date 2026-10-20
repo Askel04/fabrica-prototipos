@@ -8,6 +8,7 @@ import { Player, swingDur, SWING_HIT_U } from '../player.js';
 import { analyzeStroke } from '../stroke.js';
 import { classify, buildShot } from '../shots.js';
 import { moveTeam, dodge, chaseExit } from '../ai.js';
+import { VolleyMode } from '../modes/VolleyMode.js';
 import { hitSound, bounceSound, glassSound, netSound, whiffSound, pointSound, whooshSound } from '../utils/sound.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -197,7 +198,14 @@ export class MatchScene {
     window.addEventListener('pointerup', this.onUp);
     window.addEventListener('pointercancel', this.onUp);
     this.renderScore();
-    this.startPoint();
+    this.volley = new VolleyMode(this);
+    // ?volley abre directamente la volea defensiva (pruebas)
+    if (this.params.volley || new URLSearchParams(location.search).has('volley')) this.startVolleyDefense();
+    else this.startPoint();
+  }
+
+  startVolleyDefense() {
+    this.volley.start();
   }
 
   exit() {
@@ -460,6 +468,18 @@ export class MatchScene {
   endPoint(winner, reason) {
     if (this.phase === 'pointEnd') return;
     this.phase = 'pointEnd';
+    if (this.volley?.active) {
+      this.after(C.POINT_END_DELAY * 0.9, () => this.volley.finish());
+      // Modo de prueba: otra volea defensiva en vez de un punto normal
+      if (this.params.volley) {
+        this.after(C.POINT_END_DELAY, () => this.startVolleyDefense());
+        this.toast(winner === 1 ? '¡PUNTO!' : 'Punto rival', '', winner === 1 ? '#ffe066' : '#ff8a80');
+        pointSound(winner === 1);
+        this.match.pts[winner]++;
+        this.renderScore();
+        return;
+      }
+    }
     this.layer.innerHTML = '';
     // Saque: la primera falta da segundo saque
     if (reason === 'falta' && this.serveTry === 1) {
@@ -498,6 +518,8 @@ export class MatchScene {
       fallo: win ? 'Fallo rival' : 'Fallaste',
       'doble falta': 'Doble falta',
       pelotazo: '¡Pelotazo!',
+      bloqueo: '¡Bloqueo en la red!',
+      'remate pasa': 'Te superó el remate',
     };
     this.toast(win ? '¡PUNTO!' : 'Punto rival', reasons[reason] || reason, win ? '#ffe066' : '#ff8a80');
     pointSound(win);
@@ -755,6 +777,7 @@ export class MatchScene {
   pointer(type, e) {
     if (e.target?.closest?.('button')) return;
     const xy = this.localXY(e);
+    if (this.volley?.active) return this.volley.pointer(type, xy);
     if (this.phase === 'tactical') {
       if (type === 'down') this.dragging = true;
       if (type === 'up') { this.dragging = false; return; }
@@ -792,6 +815,7 @@ export class MatchScene {
     this.gameTime += gdt;
 
     if (this.shot && this.phase !== 'serve') this.updateBall();
+    if (this.volley?.active) this.volley.update();
     if (this.phase === 'impact') {
       this.updateImpactUI();
       const t = this.gameTime - this.shot.t0 - this.shot.contact.t;
@@ -937,8 +961,9 @@ export class MatchScene {
       this.cam.look.lerpVectors(this.camFrom.look, this.camTo.look, k);
     }
     // Seguimiento suave de la bola con la cámara principal
-    const fx = this.phase === 'live' || this.phase === 'serve' ? this.ball.position.x * C.CAM_FOLLOW_X : 0;
-    const fz = this.phase === 'live' || this.phase === 'serve' ? this.ball.position.z * C.CAM_FOLLOW_Z : 0;
+    const follow = (this.phase === 'live' || this.phase === 'serve') && !this.volley?.active;
+    const fx = follow ? this.ball.position.x * C.CAM_FOLLOW_X : 0;
+    const fz = follow ? this.ball.position.z * C.CAM_FOLLOW_Z : 0;
     const kf = 1 - Math.exp(-C.CAM_FOLLOW_SMOOTH * dt);
     this.follow.x += (fx - this.follow.x) * kf;
     this.follow.z += (fz - this.follow.z) * kf;
@@ -949,7 +974,7 @@ export class MatchScene {
       this.shake *= Math.pow(0.002, dt);
     }
     if (this.fovKick > 0) this.fovKick = Math.max(0, this.fovKick - dt * C.FOV_KICK_DECAY);
-    const fov = C.CAM_FOV - C.FOV_KICK_SMASH * Math.sin(this.fovKick * Math.PI * 0.5);
+    const fov = (this.fovBase ?? C.CAM_FOV) - C.FOV_KICK_SMASH * Math.sin(this.fovKick * Math.PI * 0.5);
     if (fov !== this.camera.fov) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
