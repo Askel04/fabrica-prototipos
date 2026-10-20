@@ -52,17 +52,31 @@ export function judge(path, hitter, opts = {}) {
   return end(path.duration, bounces > 0 ? hitter : recv, 'muere');
 }
 
+/** Tiempo para recorrer d metros desde parado con aceleración a y velocidad máxima vmax. */
+export function travelTime(d, vmax, a) {
+  if (d <= 0) return 0;
+  const dAcc = (vmax * vmax) / (2 * a);
+  return d < dAcc ? Math.sqrt((2 * d) / a) : vmax / a + (d - dAcc) / vmax;
+}
+
 /**
- * Busca el primer momento en que algún jugador del equipo receptor puede golpear.
- * players: [{x, z}] posiciones actuales. Devuelve {t, idx, pos, bounced} o null.
+ * Busca dónde golpea el equipo receptor, como lo haría un buen jugador:
+ * en la red volea o remata; en el fondo deja botar y, si la bola va al cristal, la juega a la salida de la pared.
+ * players: [{x, z}] puntos de golpeo actuales; move: {vmax, accel, reaction}.
+ * Devuelve {t, idx, pos, bounced, afterWall} o null.
  */
-export function findContact(path, outcome, recvSide, players, speed = C.PLAYER_SPEED, reaction = C.REACTION, opts = {}) {
+export function findContact(path, outcome, recvSide, players, move, opts = {}) {
   if (outcome.winner === recvSide) return null; // va fuera: no se toca
+  const vmax = move?.vmax ?? C.PLAYER_SPEED;
+  const accel = move?.accel ?? C.PLAYER_ACCEL;
+  const reaction = move?.reaction ?? C.REACTION;
   const tEnd = outcome.t - 0.02;
   const p = { x: 0, y: 0, z: 0 };
+  const q = { x: 0, y: 0, z: 0 };
   const candidates = [];
   let crossed = false;
   let bounceT = null;
+  let wallT = null;
   const evs = path.events;
   let ei = 0;
   for (let t = 0.05; t < tEnd; t += 1 / 60) {
@@ -70,29 +84,38 @@ export function findContact(path, outcome, recvSide, players, speed = C.PLAYER_S
       const e = evs[ei++];
       if (e.type === 'cross' && e.to === recvSide) crossed = true;
       if (e.type === 'ground' && sideOf(e.z) === recvSide && bounceT === null) bounceT = e.t;
+      if (e.type === 'wall' && bounceT !== null && wallT === null && sideOf(e.z) === recvSide) wallT = e.t;
     }
     if (!crossed) continue;
     sampleAt(path, t, p);
     if (sideOf(p.z) !== recvSide || p.y < C.MIN_HIT_H || p.y > C.MAX_HIT_H) continue;
-    if (Math.abs(p.z) < 1.2) continue; // demasiado pegado a la red
+    if (Math.abs(p.z) < 1.2 || Math.abs(p.z) > 9.6) continue; // pegado a la red o al cristal
     const bounced = bounceT !== null && t > bounceT;
     if (opts.mustBounce && !bounced) continue; // el resto del saque no se puede volear
+    sampleAt(path, t + 1 / 60, q);
+    const vy = (q.y - p.y) * 60;
     for (let i = 0; i < players.length; i++) {
       const d = Math.hypot(players[i].x - p.x, players[i].z - p.z) - C.REACH;
-      if (d <= speed * Math.max(0, t - reaction)) {
-        candidates.push({ t, idx: i, pos: { ...p }, bounced, dist: d });
+      if (travelTime(d, vmax, accel) <= t - reaction) {
+        candidates.push({ t, idx: i, pos: { ...p }, bounced, afterWall: wallT !== null && t > wallT, vy, dist: d, atNet: Math.abs(players[i].z) < 5.5 });
       }
     }
   }
   if (!candidates.length) return null;
-  // Preferencia: tras el bote, a buena altura y bajando; si no, volea lo más tarde posible.
+  const pre = candidates.filter((c) => !c.bounced);
   const after = candidates.filter((c) => c.bounced);
-  const good = after.find((c) => c.pos.y < 1.4 && c.pos.y > 0.4);
-  let pick = good || after[0];
-  if (!pick) {
-    const vol = candidates.filter((c) => !c.bounced);
-    pick = vol[vol.length - 1];
-  }
+  let pick = null;
+  // 1) Remate: bola alta antes del bote cerca de la red, a la altura ideal de golpeo por encima de la cabeza
+  const over = pre.filter((c) => c.pos.y >= C.SMASH_MIN_H && Math.abs(c.pos.z) <= C.SMASH_MAX_DNET + 0.5);
+  if (over.length) pick = over.reduce((a, c) => (Math.abs(c.pos.y - 2.6) < Math.abs(a.pos.y - 2.6) ? c : a));
+  // 2) En la red se volea
+  if (!pick) pick = pre.find((c) => c.atNet && c.pos.y >= 0.8 && c.pos.y <= 1.9);
+  // 3) Lectura de pared: si la bola va al cristal, se juega a la salida
+  if (!pick && wallT !== null) pick = after.find((c) => c.afterWall && c.pos.y > 0.45 && c.pos.y < 1.5);
+  // 4) Tras el bote, a buena altura y bajando
+  if (!pick) pick = after.find((c) => !c.afterWall && c.pos.y < 1.4 && c.pos.y > 0.4 && c.vy <= 0.5);
+  if (!pick) pick = after[0];
+  if (!pick) pick = pre[pre.length - 1];
   // Entre los dos jugadores, el más cercano a ese punto
   const same = candidates.filter((c) => Math.abs(c.t - pick.t) < 1e-6);
   same.sort((a, b) => a.dist - b.dist);

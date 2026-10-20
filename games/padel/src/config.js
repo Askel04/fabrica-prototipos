@@ -95,6 +95,8 @@ export const CONFIG = {
   TIMING_DEV_DEG: 8, // desvío lateral por golpear pronto o tarde
   RED_BEAM_POWER: 0.85, // remate con haz rojo
   RED_BEAM_Q: 0.6,
+  BEAM_FRAMES: 10, // longitud del haz (fotogramas de estela)
+  BEAM_RADIUS: 0.09,
 
   // Impacto (cámara lenta)
   SLOWMO: 0.12, // factor de tiempo durante el impacto
@@ -113,7 +115,14 @@ export const CONFIG = {
   SIDE_CAM_LOOK_AHEAD: 0.55, // m hacia el rival que se desplaza el centro de la vista
 
   // Jugadores
-  PLAYER_SPEED: 5.2, // m/s
+  PLAYER_SPEED: 5.2, // m/s (velocidad máxima)
+  PLAYER_ACCEL: 11, // m/s²
+  PLAYER_DECEL: 9, // m/s² al frenar en la llegada
+  NET_Z: 3.2, // posición de red
+  DODGE_SPEED: 16, // bolas más rápidas que esto se esquivan
+  DODGE_DIST: 1.0, // m: si la bola pasa más cerca, el jugador se aparta
+  DODGE_REACTION: 0.2, // s de juego antes de reaccionar
+  BODY_R: 0.28, // m: radio del cuerpo para el pelotazo
   REACH: 1.0, // alcance horizontal con la pala
   MIN_HIT_H: 0.25,
   MAX_HIT_H: 2.9,
@@ -124,10 +133,10 @@ export const CONFIG = {
   // IA
   AI: {
     errBase: 1.4, // m de error
-    missChance: 0.08,
-    missChanceFastBall: 0.25, // extra si la bola llega muy rápida
-    missPerfect: 0.2, // extra si tu golpe fue perfecto
-    missPerRally: 0.03, // extra por cada golpe del intercambio (cansancio)
+    missChance: 0.05,
+    missChanceFastBall: 0.15, // extra si la bola llega muy rápida
+    missPerfect: 0.15, // extra si tu golpe fue perfecto
+    missPerRally: 0.02, // extra por cada golpe del intercambio (cansancio)
     fastBall: 20, // m/s
     powerMin: 0.35,
     powerMax: 0.8,

@@ -94,6 +94,8 @@ export class Player {
     this.facing = side === 1 ? Math.PI : 0;
     this.root.rotation.y = this.facing;
     this.target = null;
+    this.vel = { x: 0, z: 0 };
+    this.moveDelay = 0;
     this.speed = C.PLAYER_SPEED;
     this.runPhase = 0;
     this.swingT = -1;
@@ -113,7 +115,11 @@ export class Player {
     this.body.rotation.y = 0;
   }
 
-  moveTo(x, z) { this.target = { x, z }; }
+  // delay: s de juego antes de empezar a moverse (reacción)
+  moveTo(x, z, delay = 0) {
+    this.target = { x: Math.max(-4.75, Math.min(4.75, x)), z: Math.max(-9.75, Math.min(9.75, z)) };
+    this.moveDelay = delay;
+  }
 
   // hold: fracción del golpe donde se queda esperando (preparación en la fase de impacto)
   swing(kind = 'drive', hold = null) {
@@ -125,19 +131,28 @@ export class Player {
   release() { this.hold = null; }
 
   update(dt) {
-    // Desplazamiento
-    let moving = false;
-    if (this.target) {
+    // Desplazamiento con aceleración y frenada (llegada suave al objetivo)
+    if (this.moveDelay > 0) this.moveDelay -= dt;
+    let wx = 0, wz = 0;
+    if (this.target && !(this.moveDelay > 0)) {
       const dx = this.target.x - this.pos.x;
       const dz = this.target.z - this.pos.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.03) {
-        const step = Math.min(d, this.speed * dt);
-        this.pos.x += (dx / d) * step;
-        this.pos.z += (dz / d) * step;
-        moving = true;
+      if (d > 0.02) {
+        const want = Math.min(this.speed, Math.sqrt(2 * C.PLAYER_DECEL * d));
+        wx = (dx / d) * want;
+        wz = (dz / d) * want;
       }
     }
+    const ax = wx - this.vel.x, az = wz - this.vel.z;
+    const al = Math.hypot(ax, az);
+    const maxA = C.PLAYER_ACCEL * dt;
+    const k = al > maxA && al > 0 ? maxA / al : 1;
+    this.vel.x += ax * k;
+    this.vel.z += az * k;
+    this.pos.x += this.vel.x * dt;
+    this.pos.z += this.vel.z * dt;
+    const moving = Math.hypot(this.vel.x, this.vel.z) > 0.35;
     if (moving) this.runPhase += dt * 14;
     else this.runPhase *= 0.8;
     const sw = Math.sin(this.runPhase) * (moving ? 0.7 : 0);
@@ -148,6 +163,7 @@ export class Player {
     // Celebración: saltitos
     if (this.celebrate > 0) {
       this.celebrate -= dt;
+      this.target = null;
       this.body.position.y = Math.abs(Math.sin(this.celebrate * 12)) * 0.25;
       this.arms[0].rotation.set(-2.8, 0, -0.3);
       this.arms[1].rotation.set(-2.8, 0, 0.3);
@@ -179,6 +195,6 @@ export class Player {
       this.armL.rotation.x = -0.3 - sw * 0.6;
     }
     if (!moving) this.root.rotation.y = this.facing;
-    else this.root.rotation.y = this.facing + Math.max(-0.4, Math.min(0.4, ((this.target.x - this.pos.x) * this.side) * 0.3));
+    else this.root.rotation.y = this.facing + Math.max(-0.4, Math.min(0.4, this.vel.x * this.side * 0.08));
   }
 }

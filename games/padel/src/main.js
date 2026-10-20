@@ -56,7 +56,8 @@ fit();
 const SPEED = Number(new URLSearchParams(location.search).get('speed')) || 1;
 let last = performance.now();
 function loop(now) {
-  const dt = Math.min(0.05, (now - last) / 1000) * SPEED;
+  // El primer timestamp de rAF puede ser anterior a performance.now(): nunca dt negativo
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)) * SPEED;
   last = now;
   app.scene?.update(dt);
   requestAnimationFrame(loop);

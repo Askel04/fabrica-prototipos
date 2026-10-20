@@ -7,6 +7,7 @@ import { buildCourt } from '../court.js';
 import { Player, swingDur, SWING_HIT_U } from '../player.js';
 import { analyzeStroke } from '../stroke.js';
 import { classify, buildShot } from '../shots.js';
+import { moveTeam, dodge, chaseExit } from '../ai.js';
 import { hitSound, bounceSound, glassSound, netSound, whiffSound, pointSound, whooshSound } from '../utils/sound.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -95,6 +96,15 @@ export class MatchScene {
       this.trail.push(m);
     }
     this.trailPos = [];
+    // Haz rojo del remate fuerte: cilindro brillante desde la bola hacia atrás en su trayectoria
+    const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true);
+    this.beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff1a1a, transparent: true, opacity: 0.95, depthWrite: false }));
+    const glow = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff5a3a, transparent: true, opacity: 0.35, depthWrite: false }));
+    glow.scale.set(2.4, 1, 2.4);
+    this.beam.add(glow);
+    this.beam.visible = false;
+    scene.add(this.beam);
+    this.beamUp = new THREE.Vector3(0, 1, 0);
 
     // Flecha de dirección y fuerza (apunta a +z; se gira con rotation.y = rumbo)
     this.arrowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false, side: THREE.DoubleSide });
@@ -270,14 +280,6 @@ export class MatchScene {
     };
   }
 
-  goHome(team) {
-    const side = team[0].side;
-    team.forEach((p, i) => {
-      p.speed = side === 1 ? C.PLAYER_SPEED * (1 + this.stats.speed * META.STAT_SPEED) : C.PLAYER_SPEED;
-      p.moveTo(i === 0 ? -C.HOME_X : C.HOME_X, side * C.HOME_BACK_Z);
-    });
-  }
-
   // ---------- flujo del punto ----------
   startPoint(secondServe = false) {
     if (!secondServe) this.serveTry = 1;
@@ -353,12 +355,19 @@ export class MatchScene {
     const contact = findContact(
       path, outcome, -hitter,
       recvTeam.map((p) => this.racketPoint(p)),
-      recvTeam[0].speed,
-      C.REACTION,
+      { vmax: recvTeam[0].speed, accel: C.PLAYER_ACCEL, reaction: C.REACTION },
       { mustBounce: !!opts.serve },
     );
     this.rally++;
-    this.shot = { path, t0: this.gameTime, hitter, outcome, contact, evIdx: 0, kind, spin, power: opts.power ?? 0.5, q: opts.q ?? 1 };
+    const power = opts.power ?? 0.5;
+    const q = opts.q ?? 1;
+    // Remate con buena fuerza y ejecución: haz rojo
+    const beam = kind === 'remate' && power >= C.RED_BEAM_POWER && q >= C.RED_BEAM_Q;
+    this.shot = { path, t0: this.gameTime, hitter, outcome, contact, evIdx: 0, kind, spin, power, q, beam, recvSide: -hitter };
+    if (beam) {
+      this.toast('¡REMATE!', '', '#ff5040');
+      vibrate([30, 20, 60]);
+    }
     this.ballSpin = spin;
     if (contact && hitter === 1) {
       // La IA decide ya su golpe para preparar la animación adecuada
@@ -375,17 +384,21 @@ export class MatchScene {
         + (this.lastQ > 0.85 ? A.missPerfect : 0) + this.rally * A.missPerRally;
       contact.miss = Math.random() < miss;
     }
-    this.goHome(hitTeam);
+    // Quien golpea: tras un globo sube a la red; si ya estaba en la red se queda; si no, al fondo
+    moveTeam(hitTeam, kind === 'globo' || Math.abs(player.pos.z) < 6 ? 'net' : 'back', pos.x, 0.1);
     if (contact) {
+      // El receptor va a por la bola; su pareja acompaña a la misma altura en el otro lado
       const p = recvTeam[contact.idx];
       const body = this.bodyFor(p, contact.pos);
-      const need = Math.hypot(body.x - p.pos.x, body.z - p.pos.z) / Math.max(0.1, contact.t - C.REACTION);
-      p.speed = Math.min(10, Math.max(p.speed, need));
-      p.moveTo(body.x, body.z);
+      p.moveTo(body.x, body.z, C.REACTION);
       const mate = recvTeam[1 - contact.idx];
-      mate.moveTo(contact.idx === 0 ? C.HOME_X : -C.HOME_X, -hitter * C.HOME_BACK_Z);
+      const deep = Math.abs(contact.pos.z) > 6 || kind === 'globo';
+      mate.moveTo(contact.idx === 0 ? C.HOME_X : -C.HOME_X, -hitter * (deep ? C.HOME_BACK_Z : C.NET_Z), C.REACTION);
+      dodge(path, recvTeam, -hitter, p);
+    } else if (outcome.winner === hitter && (outcome.reason === 'por 3' || outcome.reason === 'por 4')) {
+      chaseExit(path, outcome, recvTeam);
     } else {
-      this.goHome(recvTeam);
+      dodge(path, recvTeam, -hitter);
     }
   }
 
@@ -484,16 +497,27 @@ export class MatchScene {
       muere: 'Bola muerta',
       fallo: win ? 'Fallo rival' : 'Fallaste',
       'doble falta': 'Doble falta',
+      pelotazo: '¡Pelotazo!',
     };
     this.toast(win ? '¡PUNTO!' : 'Punto rival', reasons[reason] || reason, win ? '#ffe066' : '#ff8a80');
     pointSound(win);
     if (reason === 'por 3' || reason === 'por 4') {
-      this.burst(this.ball.position, 0xffcc33, 20, 6);
-      this.burst(this.ball.position, 0x4fb3ff, 20, 6);
-      this.shake = 0.15;
+      // Festejo: confeti en varias tandas, cámara y vibración largas
+      const at = this.ball.position.clone();
+      for (let k = 0; k < 4; k++) {
+        this.after(k * 0.25, () => {
+          this.burst(at, 0xffcc33, 14, 7);
+          this.burst(at, 0x4fb3ff, 14, 7);
+          this.burst(at, 0xff5040, 10, 7);
+        });
+      }
+      this.shake = 0.2;
+      this.fovKick = 1;
+      vibrate([60, 40, 60, 40, 120]);
+      (win ? this.team : this.rivals).forEach((p) => (p.celebrate = 2.4));
     }
     vibrate(win ? [30, 40, 60] : 60);
-    (win ? this.team : this.rivals).forEach((p) => (p.celebrate = 1.2));
+    (win ? this.team : this.rivals).forEach((p) => (p.celebrate = Math.max(p.celebrate, 1.2)));
     if (gameWon) {
       this.after(0.9, () => this.toast(win ? '¡JUEGO!' : 'Juego rival', `${m.games[1]} - ${m.games[-1]}`, win ? '#ffe066' : '#ff8a80'));
     }
@@ -760,7 +784,7 @@ export class MatchScene {
       if (this.timeScale >= 1) this.rampTime = false;
     }
     let gdt = dt * this.timeScale;
-    if (this.debugFreeze && this.phase === 'impact') gdt = 0; // solo pruebas automáticas
+    if (this.debugFreeze && (this.phase === 'impact' || this.debugFreeze === 'all')) gdt = 0; // solo pruebas automáticas
     if (this.hitStop > 0) {
       this.hitStop -= dt;
       gdt = 0;
@@ -803,6 +827,21 @@ export class MatchScene {
       else if (e.type === 'net') netSound();
     }
 
+    // Pelotazo: la bola da en el cuerpo de un jugador antes de botar en su campo
+    if (this.phase === 'live' && s.recvSide && (s.outcome.legalBounceT == null || t < s.outcome.legalBounceT) && t < s.outcome.t) {
+      const b = this.ball.position;
+      if (Math.sign(b.z) === s.recvSide && b.y > 0.1 && b.y < 1.85) {
+        const team = s.recvSide === 1 ? this.team : this.rivals;
+        for (let i = 0; i < 2; i++) {
+          if (s.contact && i === s.contact.idx && !s.contact.done) continue;
+          if (Math.hypot(team[i].pos.x - b.x, team[i].pos.z - b.z) < C.BODY_R) {
+            this.bodyHit(team[i], s);
+            return;
+          }
+        }
+      }
+    }
+
     const c = s.contact;
     if (this.phase === 'live' && c && !c.done) {
       if (s.hitter === -1) {
@@ -835,6 +874,9 @@ export class MatchScene {
     this.blob.scale.setScalar(1 + h * 0.3);
     this.blob.material.opacity = clamp(0.4 - h * 0.05, 0.1, 0.4);
     const gap = s.kind === 'remate' ? 4 : 2; // estela más larga en remates
+    const beamCol = s.beam ? 0xff2a2a : C.COLORS.ball;
+    this.trail.forEach((m) => m.material.color.setHex(beamCol));
+    this.ball.material.emissive.setHex(s.beam ? 0xaa0000 : 0x3a4400);
     // La bola gira según su efecto (se ve la costura)
     this.ball.rotation.x -= this.ballSpin * 0.4 * Math.sign(-s.hitter || 1);
     this.trailPos.unshift(this.ball.position.clone());
@@ -844,6 +886,32 @@ export class MatchScene {
       m.visible = !!p && this.phase !== 'tactical';
       if (p) m.position.copy(p);
     });
+    // Haz: de la bola a su posición de hace unos fotogramas, mientras va rápida
+    const tail = this.trailPos[Math.min(this.trailPos.length - 1, C.BEAM_FRAMES)];
+    const showBeam = s.beam && tail && this.phase !== 'tactical' && t < (s.outcome.legalBounceT ?? 9) + 0.15;
+    this.beam.visible = !!showBeam;
+    if (showBeam) {
+      const a = this.ball.position;
+      const d = this.v3.subVectors(a, tail);
+      const len = d.length();
+      if (len > 0.01) {
+        this.beam.position.copy(a).addScaledVector(d, -0.5);
+        this.beam.quaternion.setFromUnitVectors(this.beamUp, d.normalize());
+        this.beam.scale.set(C.BEAM_RADIUS, len, C.BEAM_RADIUS);
+      }
+    }
+  }
+
+  /** La bola golpea a un jugador: punto para quien la tiró. */
+  bodyHit(player, s) {
+    const b = this.ball.position;
+    const p = { x: b.x, y: b.y, z: b.z };
+    const path = simulate({ p, v: { x: (b.x - player.pos.x) * 3, y: 2, z: s.recvSide * -2 } }, 2);
+    this.shot = { ...s, path, t0: this.gameTime, contact: null, evIdx: 0, beam: false, recvSide: null };
+    this.shake = 0.12;
+    vibrate(80);
+    player.celebrate = 0;
+    this.endPoint(-s.recvSide, 'pelotazo');
   }
 
   updateParticles(dt) {

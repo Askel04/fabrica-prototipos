@@ -1,0 +1,38 @@
+// Escenario: tu pareja en la red, el rival tira un globo corto; remate con flecha al 100 % y trazo plano.
+// Uso: node tests/t-remate.mjs [yawRelGrados]
+import { open } from './pw.mjs';
+const rel = Number(process.argv[2] || 0);
+const { browser, page, errors, swipe, waitFor, shot } = await open('http://localhost:5173/?match');
+const S = 'window.__padel.scene';
+await page.waitForTimeout(600);
+const off = await page.evaluate(`(() => { const r = document.getElementById('stage').getBoundingClientRect(); return {x:r.left, y:r.top}; })()`);
+await page.evaluate(`(() => { const s = ${S}; s.timers = []; s.phase = 'live';
+  s.team[0].pos.set(-1.5, 0, 2.6); s.team[1].pos.set(2, 0, 2.6); s.rivals[0].pos.set(-1, 0, -8); s.rivals[1].pos.set(2, 0, -8);
+  [...s.team, ...s.rivals].forEach(p => { p.target = null; p.vel = {x:0, z:0}; });
+  s.doHit(s.rivals[0], {x: -0.5, y: 1, z: -7}, {x: 0.2, y: 8.2, z: 6.3}, 0, 0, 'globo', {}); })()`);
+console.log('contacto', await page.evaluate(`JSON.stringify(${S}.shot.contact)`));
+await waitFor(`${S}.phase === 'tactical'`, null, 20000);
+await page.evaluate(`(() => { const s = ${S}; s.yaw = Math.PI + ${rel} * Math.PI / 180; s.power = 1; s.updateArrow(); })()`);
+await waitFor(`${S}.camT >= 1`);
+await shot('r-01-tactica');
+await page.getByText('SIGUIENTE').tap();
+await waitFor(`${S}.phase === 'impact'`);
+await waitFor(`${S}.camT >= 1`);
+await waitFor(`(${S}.gameTime - ${S}.shot.t0 - ${S}.shot.contact.t) > -0.03`);
+await page.evaluate(`${S}.debugFreeze = true`);
+const b = await page.evaluate(`({...${S}.ballScreen, r: ${S}.ballR, f: ${S}.fwd})`);
+await shot('r-02-impacto');
+await swipe(b.x + off.x - b.f * 1.5 * b.r, b.y + off.y - 0.5 * b.r, b.x + off.x + b.f * 1.5 * b.r, b.y + off.y + 0.5 * b.r, 8);
+await page.evaluate(`${S}.debugFreeze = false`);
+await waitFor(`${S}.gameTime - ${S}.shot.t0 > 0.07`);
+await page.evaluate(`${S}.debugFreeze = 'all'`);
+await page.waitForTimeout(300);
+await shot('r-03-haz');
+await page.evaluate(`${S}.debugFreeze = false`);
+console.log('golpe', await page.evaluate(`JSON.stringify(${S}.lastHit)`));
+console.log('resultado previsto', await page.evaluate(`JSON.stringify({o: ${S}.shot.outcome, beam: ${S}.shot.beam})`));
+await waitFor(`${S}.phase === 'pointEnd' || ${S}.phase === 'tactical'`, null, 20000);
+await page.waitForTimeout(700);
+await shot('r-04-fin');
+console.log('ERRORES:', errors.length ? errors : 0);
+await browser.close();
