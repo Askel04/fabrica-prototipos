@@ -7,7 +7,13 @@ const S = 'window.__padel.scene';
 let shots = 0;
 const t0 = Date.now();
 while (Date.now() - t0 < 400000) {
-  await waitFor(`${S}.phase === 'over' || !!document.querySelector('.oppcard') || ${S}.phase === 'tactical' || (${S}.volley?.launched && !${S}.volley.resolved)`, null, 90000);
+  try {
+    await waitFor(`${S}.phase === 'over' || !!document.querySelector('.oppcard') || ${S}.phase === 'tactical' || (${S}.volley?.launched && !${S}.volley.resolved)`, null, 60000);
+  } catch (e) {
+    console.log('ATASCO', await page.evaluate(`JSON.stringify({ph: ${S}.phase, imp: ${S}.impact && {...${S}.impact, stroke: !!${S}.impact.stroke}, tRel: ${S}.shot && (${S}.gameTime - ${S}.shot.t0 - (${S}.shot.contact?.t ?? 0)), c: ${S}.shot?.contact && {done: ${S}.shot.contact.done, miss: ${S}.shot.contact.miss}, out: ${S}.shot?.outcome, ts: ${S}.timeScale, timers: ${S}.timers.length, vol: ${S}.volley?.active})`));
+    await shot('atasco');
+    throw e;
+  }
   const st = await page.evaluate(`${S}.phase === 'over' ? 'over' : document.querySelector('.oppcard') ? 'card' : ${S}.phase === 'tactical' ? 'tactical' : 'volley'`);
   if (st === 'over') break;
   if (st === 'card') {
@@ -30,5 +36,7 @@ while (Date.now() - t0 < 400000) {
 console.log('final', await page.evaluate(`JSON.stringify({games: ${S}.match.games, won: ${S}.opp.won, n: ${S}.opp.n, need: ${S}.opp.need})`));
 await page.waitForTimeout(500);
 await shot('opp-final');
+const errs = await page.evaluate(`${S}.contactErrs`);
+console.log('contactos pala-bola:', errs.length, 'peor (m):', Math.max(...errs));
 console.log('ERRORES:', errors.length ? errors : 0);
 await browser.close();

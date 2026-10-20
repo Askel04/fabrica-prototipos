@@ -112,9 +112,14 @@ export const CONFIG = {
   ARROW_MAX_LEN: 6, // m con fuerza 100 %
   ARROW_MAX_YAW: 0.75, // rad a cada lado de "recto"
   ARROW_FULL_FRAC: 0.42, // arrastre (fracción del alto de pantalla) para el 100 %
-  SIDE_CAM_LOOK_AHEAD: 0.55, // m hacia el rival que se desplaza el centro de la vista
+  SIDE_CAM_LOOK_AHEAD: 0.25, // m hacia el rival que se desplaza el centro de la vista
 
   // Jugadores
+  RACKET_TILT: -0.35, // rad: la pala, algo inclinada hacia delante respecto al brazo
+  MAX_JUMP: 0.5, // m de salto para llegar a bolas altas
+  MAX_CROUCH: 0.45, // m que baja la cadera para bolas bajas
+  ANIM_SWITCH_MAX: 0.3, // m: si la animación de la familia exige moverse más que esto, se usa la preparada
+  CONTACT_LERP: 0.3, // s reales para colocarse en el contacto al entrar en la pausa táctica
   PLAYER_SPEED: 5.2, // m/s (velocidad máxima)
   PLAYER_ACCEL: 11, // m/s²
   PLAYER_DECEL: 9, // m/s² al frenar en la llegada

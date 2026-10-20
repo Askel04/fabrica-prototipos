@@ -73,6 +73,9 @@ export class VolleyMode {
     [...m.team, ...m.rivals].forEach((p) => { p.vel = { x: 0, z: 0 }; p.celebrate = 0; p.idlePose(); });
     const hand = m.racketPoint(striker);
     this.hitPos = { x: hand.x, y: V.SMASH_H, z: hand.z + 0.2 };
+    // El que remata se coloca para que su pala toque la bola en lo alto
+    this.reach = striker.reach(this.hitPos, 'smash');
+    striker.pos.set(this.reach.body.x, 0, this.reach.body.z);
     m.ball.position.set(this.hitPos.x, this.hitPos.y, this.hitPos.z);
     m.blendCamera(V.CAM, 0.5);
     m.fovBase = V.FOV;
@@ -85,7 +88,7 @@ export class VolleyMode {
       beep(n === 1 ? 880 : 660, 0.12, 'square', 0.15);
     }));
     const t3 = 0.2 + 3 * V.COUNT_STEP;
-    m.after(t3 - swingDur('smash') * SWING_HIT_U, () => striker.swing('smash'));
+    m.after(t3 - swingDur('smash') * SWING_HIT_U, () => striker.swing('smash', null, this.reach.hit));
     m.after(t3, () => this.launch());
   }
 
@@ -119,6 +122,7 @@ export class VolleyMode {
     const vz = rand(V.SPEED[0], V.SPEED[1]);
     const T = (aim.z - H.z) / vz;
     const v = { x: (aim.x - H.x) / T, y: (aim.y - H.y + 0.5 * C.GRAVITY * T * T) / T, z: vz };
+    m.snapToContact(m.rivals[0], H, 'smash');
     hitSound(1);
     m.shake = C.SHAKE_SMASH * 0.6;
     m.fovKick = 0.6;

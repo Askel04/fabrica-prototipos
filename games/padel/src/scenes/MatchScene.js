@@ -181,6 +181,7 @@ export class MatchScene {
     this.camDur = 1;
     this.shake = 0;
     this.hitStop = 0;
+    this.contactErrs = []; // distancia pala-bola en cada contacto (pruebas)
     this.fovKick = 0;
     this.squash = 0;
     this.follow = new THREE.Vector3();
@@ -292,11 +293,26 @@ export class MatchScene {
     return { x: p.pos.x + 0.55 * p.side, z: p.pos.z };
   }
 
-  bodyFor(p, contact) {
-    return {
-      x: clamp(contact.x - 0.55 * p.side, -4.7, 4.7),
-      z: clamp(contact.z + 0.25 * p.side, -9.7, 9.7),
-    };
+  /** Animación de golpe según la altura de la bola (la que prepara el jugador antes de saber el efecto). */
+  contactAnim(p, pos, serve) {
+    if (serve) return 'saque';
+    if (pos.y >= C.SMASH_MIN_H) return 'smash';
+    if (pos.y >= C.OVERHEAD_MIN_H) return 'bandeja';
+    return this.animFor('plano', p, pos);
+  }
+
+  /** Coloca al jugador y su pose para que la cara de la pala toque la bola; devuelve la distancia que queda. */
+  snapToContact(p, pos, anim, ballR = C.BALL_VISUAL_R) {
+    const r = p.reach(pos, anim, ballR);
+    p.target = null;
+    p.vel = { x: 0, z: 0 };
+    p.pos.set(r.body.x, 0, r.body.z);
+    p.root.rotation.y = p.facing;
+    p.holdContact(anim, r.hit);
+    const f = p.racketWorld();
+    const err = Math.hypot(f.x - pos.x, f.y - pos.y, f.z - (pos.z + p.side * ballR));
+    this.contactErrs.push(+err.toFixed(3));
+    return err;
   }
 
   // ---------- flujo del punto ----------
@@ -344,9 +360,17 @@ export class MatchScene {
     const bz = hand.z - st * 0.3;
     this.ball.position.set(hand.x, 1.0, bz);
     if (st === -1) {
+      // El que saca se coloca para que la pala toque la bola en el punto de saque
+      const sp = { x: hand.x, y: 0.8, z: bz };
+      const r = server.reach(sp, 'saque');
+      server.pos.set(r.body.x, 0, r.body.z);
+      this.ball.position.set(sp.x, sp.y, sp.z);
       this.after(0.9, () => {
-        server.swing('saque');
-        this.after(swingDur('saque') * SWING_HIT_U, () => this.aiShot(server, { x: hand.x, y: 0.8, z: bz }, { serve: true }));
+        server.swing('saque', null, r.hit);
+        this.after(swingDur('saque') * SWING_HIT_U, () => {
+          this.snapToContact(server, sp, 'saque');
+          this.aiShot(server, sp, { serve: true });
+        });
       });
     } else {
       this.after(0.6, () => this.playerServe(idx, { x: hand.x, y: 1.1, z: bz }));
@@ -370,9 +394,12 @@ export class MatchScene {
     const striker = this.rivals[h.idx];
     this.ball.position.set(h.from.x, h.from.y, h.from.z);
     const anim = C.SHOTS[h.family].anim;
+    const r = striker.reach(h.from, anim);
+    striker.pos.set(r.body.x, 0, r.body.z);
     this.after(0.8, () => {
-      striker.swing(anim);
+      striker.swing(anim, null, r.hit);
       this.after(swingDur(anim) * SWING_HIT_U, () => {
+        this.snapToContact(striker, h.from, anim);
         hitSound(0.5);
         this.doHit(striker, { ...h.from }, { ...h.v }, h.spin, 0, h.family, { pick: sit.pick });
       });
@@ -442,8 +469,11 @@ export class MatchScene {
     if (contact) {
       // El receptor va a por la bola; su pareja acompaña a la misma altura en el otro lado
       const p = recvTeam[contact.idx];
-      const body = this.bodyFor(p, contact.pos);
-      p.moveTo(body.x, body.z, C.REACTION);
+      // Corre hasta donde la cara de su pala toca la bola
+      if (!contact.anim) contact.anim = this.contactAnim(p, contact.pos, false);
+      const r = p.reach(contact.pos, contact.anim);
+      contact.hit = r.hit;
+      p.moveTo(r.body.x, r.body.z, C.REACTION);
       const mate = recvTeam[1 - contact.idx];
       const deep = Math.abs(contact.pos.z) > 6 || kind === 'globo';
       mate.moveTo(contact.idx === 0 ? C.HOME_X : -C.HOME_X, -hitter * (deep ? C.HOME_BACK_Z : C.NET_Z), C.REACTION);
@@ -653,6 +683,16 @@ export class MatchScene {
     }
     this.arrow.visible = true;
     this.updateArrow();
+    // Bola y pala en contacto mientras eliges: el jugador se coloca en la pose de golpe
+    const p = this.team[c.idx];
+    c.anim = this.contactAnim(p, cp, c.serve);
+    const r = p.reach(cp, c.anim);
+    p.target = null;
+    p.vel = { x: 0, z: 0 };
+    this.placeLerp = { p, from: p.pos.clone(), to: new THREE.Vector3(r.body.x, 0, r.body.z), t: 0 };
+    p.root.rotation.y = p.facing;
+    p.holdContact(c.anim, r.hit);
+    this.ball.position.set(cp.x, cp.y, cp.z);
   }
 
   updateArrow() {
@@ -713,10 +753,14 @@ export class MatchScene {
     this.hitDone = false;
     // Hacia dónde queda el campo rival en pantalla (la cámara mira desde +x)
     this.fwd = Math.sign(cp.z || 1);
-    // El personaje prepara el golpe según la altura y espera al deslizamiento
+    // El personaje, quieto en su sitio de contacto (con la bola grande delante), prepara el golpe y espera
     const p = this.team[c.idx];
-    const prep = c.serve ? 'saque' : cp.y >= C.SMASH_MIN_H ? 'smash' : cp.y >= C.OVERHEAD_MIN_H ? 'bandeja' : this.animFor('plano', p, cp);
-    p.swing(prep, 0.35);
+    this.placeLerp = null;
+    const r = p.reach(cp, c.anim, C.BALL_VISUAL_R * C.IMPACT_BALL_SCALE);
+    p.pos.set(r.body.x, 0, r.body.z);
+    p.root.rotation.y = p.facing;
+    p.swing(c.anim, 0.35, r.hit);
+    this.impact = { stroke: null, released: false, wait: 0, done: false };
     vibrate(10);
     whooshSound();
   }
@@ -777,12 +821,23 @@ export class MatchScene {
     this.resolveHit(st);
   }
 
+  /** Guarda el trazo. El golpe sale cuando la bola llega a la pala (si fue pronto) o en el acto (si esperaba). */
   resolveHit(st) {
     this.hitDone = true;
+    const tRel = this.gameTime - this.shot.t0 - this.shot.contact.t;
+    this.impact.stroke = st;
+    this.impact.tErr = tRel < -1e-6 ? tRel : this.impact.wait;
+    if (tRel >= -1e-6) this.executeHit();
+  }
+
+  executeHit() {
+    const st = this.impact.stroke;
+    const tErr = this.impact.tErr;
+    this.impact.done = true;
     const contact = this.shot.contact;
     const player = this.team[contact.idx];
-    const pos = { x: this.ball.position.x, y: this.ball.position.y, z: this.ball.position.z };
-    const tErr = this.gameTime - this.shot.t0 - contact.t;
+    const pos = { ...contact.pos };
+    this.ball.position.set(pos.x, pos.y, pos.z);
     const timingQ = clamp(1 - Math.abs(tErr) / C.TIMING_WINDOW, 0, 1);
     const contactQ = st.dist <= 1 ? 1 : 1 - ((st.dist - 1) / (C.WHIFF_OFFSET - 1)) * 0.6;
     const q = timingQ * contactQ;
@@ -795,7 +850,12 @@ export class MatchScene {
       statPower: this.stats.power * META.STAT_POWER, statPrecision: this.stats.precision * META.STAT_PRECISION,
     });
     this.lastQ = q;
-    player.swingKind = this.animFor(family, player, pos);
+    // Fotograma de contacto: la animación de la familia si cabe desde donde está; si no, la que tenía preparada
+    const R = C.BALL_VISUAL_R * C.IMPACT_BALL_SCALE;
+    let anim = this.animFor(family, player, pos);
+    const rr = player.reach(pos, anim, R);
+    if (Math.hypot(rr.body.x - player.pos.x, rr.body.z - player.pos.z) > C.ANIM_SWITCH_MAX) anim = contact.anim;
+    this.snapToContact(player, pos, anim, R);
     player.release();
     this.doHit(player, pos, sh.v, sh.spin, sh.side, family, { serve: contact.serve, power: this.power, q });
     this.lastHit = { q, tErr, family, spin: sh.spin, angle: st.angle, dist: st.dist, contact: st.contact };
@@ -869,15 +929,44 @@ export class MatchScene {
       this.hitStop -= dt;
       gdt = 0;
     }
+    // Impacto: la bola nunca pasa de la pala sin decidir; si llega antes que el trazo, espera en el contacto
+    const imp = this.phase === 'impact' && this.impact && !this.impact.done ? this.impact : null;
+    if (imp) {
+      const cT = this.shot.t0 + this.shot.contact.t;
+      const p = this.team[this.shot.contact.idx];
+      if (imp.stroke && !imp.released && this.gameTime + gdt >= cT - swingDur(p.swingKind) * (SWING_HIT_U - 0.35)) {
+        imp.released = true;
+        p.release();
+      }
+      if (this.gameTime + gdt >= cT) {
+        imp.wait += this.gameTime + gdt - cT; // tiempo de juego "virtual" que la bola lleva esperando en la pala
+        gdt = Math.max(0, cT - this.gameTime);
+      }
+    }
     this.gameTime += gdt;
+    if (this.placeLerp) {
+      // Transición corta a la posición de contacto al entrar en la pausa táctica
+      const L = this.placeLerp;
+      L.t = Math.min(1, L.t + dt / C.CONTACT_LERP);
+      L.p.pos.lerpVectors(L.from, L.to, ease(L.t));
+      if (L.t >= 1) {
+        this.placeLerp = null;
+        const f = L.p.racketWorld();
+        const cp = this.shot.contact.pos;
+        this.contactErrs.push(+Math.hypot(f.x - cp.x, f.y - cp.y, f.z - (cp.z + L.p.side * C.BALL_VISUAL_R)).toFixed(3));
+      }
+    }
 
     if (this.shot && this.phase !== 'serve') this.updateBall();
     if (this.volley?.active) this.volley.update();
     if (this.phase === 'impact') {
       this.updateImpactUI();
+      const imp2 = this.impact;
       const t = this.gameTime - this.shot.t0 - this.shot.contact.t;
-      if (!this.hitDone && t > C.MISS_AFTER) {
-        // No deslizó a tiempo: la bola pasa
+      if (imp2.stroke && !imp2.done && t >= -1e-6) this.executeHit(); // margen por redondeo al congelar en el contacto
+      else if (!this.hitDone && imp2.wait > C.MISS_AFTER) {
+        // No deslizó a tiempo: la bola sigue y el golpe llega tarde, al aire
+        imp2.done = true;
         this.shot.contact.done = true;
         this.shot.contact.miss = true;
         this.team[this.shot.contact.idx].release();
@@ -897,7 +986,8 @@ export class MatchScene {
     const s = this.shot;
     const t = this.gameTime - s.t0;
     sampleAt(s.path, t, this.tmp);
-    this.ball.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+    // En la pausa táctica la bola se muestra ya en la pala
+    if (this.phase !== 'tactical') this.ball.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
 
     // Sonidos y polvo en los eventos del camino
     while (s.evIdx < s.path.events.length && s.path.events[s.evIdx].t <= t) {
@@ -934,11 +1024,16 @@ export class MatchScene {
         const p = this.rivals[c.idx];
         if (!c.swung && t >= c.t - swingDur(c.anim) * SWING_HIT_U) {
           c.swung = true;
-          p.swing(c.anim);
+          p.swing(c.anim, null, c.miss ? null : c.hit);
         }
         if (t >= c.t) {
           c.done = true;
-          if (!c.miss) this.aiShot(p, { ...c.pos }, { family: c.family });
+          if (!c.miss) {
+            // Fotograma de contacto exacto: la pala sobre la bola
+            this.snapToContact(p, c.pos, c.anim);
+            this.ball.position.set(c.pos.x, c.pos.y, c.pos.z);
+            this.aiShot(p, { ...c.pos }, { family: c.family });
+          }
           else { whiffSound(); this.toast('¡Falla!', '', '#ffe066'); }
         }
       }

@@ -84,11 +84,13 @@ export class Player {
     face.position.y = -0.27;
     face.castShadow = true;
     this.racket.add(face);
+    this.racketFace = face;
     const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.04, 14), mat(side === 1 ? 0xffcc33 : 0xe2453c));
     rim.rotation.x = Math.PI / 2;
     rim.position.y = -0.27;
     this.racket.add(rim);
-    this.racket.rotation.x = Math.PI; // la pala apunta hacia arriba desde la mano
+    // La pala sale de la mano como prolongación del brazo, algo inclinada hacia delante
+    this.racket.rotation.x = C.RACKET_TILT;
     this.armR.add(this.racket);
 
     this.facing = side === 1 ? Math.PI : 0;
@@ -122,10 +124,81 @@ export class Player {
   }
 
   // hold: fracción del golpe donde se queda esperando (preparación en la fase de impacto)
-  swing(kind = 'drive', hold = null) {
+  // hit: pose de contacto calculada con reach() para que la pala toque la bola en u = 0.5
+  swing(kind = 'drive', hold = null, hit = null) {
     this.swingKind = kind;
     this.swingT = 0;
     this.hold = hold;
+    this.hitPose = hit;
+  }
+
+  /** Congela al jugador en el fotograma de contacto (pala sobre la bola). */
+  holdContact(kind, hit) {
+    this.swing(kind, SWING_HIT_U, hit);
+    this.swingT = SWING_HIT_U;
+    this.update(0);
+  }
+
+  /**
+   * Pose de contacto para que la cara de la pala toque `point` sin estirar al muñeco:
+   * se elige la rotación del brazo (cinemática directa), se salta o se agacha si no llega,
+   * y se devuelve dónde tiene que estar el cuerpo. ballR: radio visible de la bola (queda delante de la cara).
+   */
+  reach(point, kind = 'drive', ballR = C.BALL_VISUAL_R) {
+    const P = POSES[kind] || POSES.drive;
+    const hit = { ...IDLE, ...P.hit };
+    const saved = {
+      ax: this.armR.rotation.x, az: this.armR.rotation.z, by: this.body.rotation.y, y: this.body.position.y,
+      ry: this.root.rotation.y, p: this.root.position.clone(),
+    };
+    this.root.position.set(0, 0, 0);
+    this.root.rotation.y = this.facing;
+    const v = new THREE.Vector3();
+    const face = (ax, az, jump) => {
+      this.armR.rotation.set(ax, 0, az);
+      this.body.rotation.y = hit.by;
+      this.body.position.y = jump;
+      this.root.updateMatrixWorld(true);
+      return this.racketFace.getWorldPosition(v).clone();
+    };
+    // Barre la elevación del brazo; si con la apertura de la pose no llega, va cerrando el brazo hacia el cuerpo
+    const sweep = (jump) => {
+      let best = null;
+      for (let i = 0; i <= 10; i++) {
+        const az = hit.az * (1 - i / 10);
+        for (let ax = 0.4; ax >= -3.14; ax -= 0.02) {
+          const f = face(ax, az, jump);
+          const d = Math.abs(f.y - point.y);
+          if (!best || d < best.d - 1e-4) best = { ax, az, d, f };
+        }
+        if (best.d < 0.01) break;
+      }
+      return best;
+    };
+    let jump = hit.jump;
+    let best = sweep(jump);
+    if (best.d > 0.01) {
+      // Ni con el brazo recto llega: salta (bola alta) o se agacha (bola baja)
+      jump = Math.max(-C.MAX_CROUCH, Math.min(C.MAX_JUMP, jump + point.y - best.f.y));
+      best = sweep(jump);
+    }
+    const f = face(best.ax, best.az, jump);
+    // La bola queda delante de la cara, hacia el campo rival
+    const fwd = -this.side;
+    const body = { x: point.x - f.x, z: point.z - f.z - fwd * ballR };
+    this.armR.rotation.set(saved.ax, 0, saved.az);
+    this.body.rotation.y = saved.by;
+    this.body.position.y = saved.y;
+    this.root.rotation.y = saved.ry;
+    this.root.position.copy(saved.p);
+    this.root.updateMatrixWorld(true);
+    return { body, hit: { ax: best.ax, az: best.az, by: hit.by, jump, lx: hit.lx }, err: best.d };
+  }
+
+  /** Posición actual de la cara de la pala en el mundo. */
+  racketWorld() {
+    this.root.updateMatrixWorld(true);
+    return this.racketFace.getWorldPosition(new THREE.Vector3());
   }
 
   release() { this.hold = null; }
@@ -172,7 +245,8 @@ export class Player {
 
     // Golpe: interpolación entre poses clave (reposo → preparación → contacto → terminación → reposo)
     if (this.swingT >= 0) {
-      const P = POSES[this.swingKind] || POSES.drive;
+      const P0 = POSES[this.swingKind] || POSES.drive;
+      const P = this.hitPose ? { ...P0, hit: { ...P0.hit, ...this.hitPose } } : P0;
       this.swingT += dt / (P.dur || 0.36);
       if (this.hold != null) this.swingT = Math.min(this.swingT, this.hold);
       const u = Math.min(1, this.swingT);
@@ -186,7 +260,14 @@ export class Player {
       this.armR.rotation.set(g('ax'), 0, g('az'));
       this.armL.rotation.set(g('lx'), 0, 0.15);
       this.body.rotation.y = g('by');
-      this.body.position.y = Math.max(this.body.position.y, g('jump'));
+      const jy = g('jump');
+      this.body.position.y = jy;
+      if (jy < 0) {
+        // Agachado: piernas abiertas para bajar la cadera sin hundir los pies
+        const a = Math.acos(Math.max(0.3, Math.min(1, (0.78 + jy) / 0.78)));
+        this.legs[0].rotation.x = a;
+        this.legs[1].rotation.x = -a;
+      }
       if (u >= 1) {
         this.swingT = -1;
         this.idlePose();
