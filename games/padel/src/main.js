@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { CONFIG as C } from './config.js';
 import { MatchScene } from './scenes/MatchScene.js';
+import { TitleScene } from './scenes/TitleScene.js';
 
 const stage = document.getElementById('stage');
 const canvas = document.getElementById('gl');
@@ -61,6 +62,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-app.go(MatchScene);
+// ?match abre directamente un partido suelto (pruebas)
+app.go(new URLSearchParams(location.search).has('match') ? MatchScene : TitleScene);
 requestAnimationFrame(loop);
 window.__padel = app; // para pruebas automáticas

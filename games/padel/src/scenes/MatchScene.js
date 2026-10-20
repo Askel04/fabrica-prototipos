@@ -49,7 +49,10 @@ export class MatchScene {
 
     this.court = buildCourt(scene);
 
-    const T = C.COLORS.team, R = C.COLORS.rival;
+    const T = C.COLORS.team;
+    const R = params.rivalKit
+      ? { ...C.COLORS.rival, shirt: params.rivalKit[0], shorts: params.rivalKit[1] }
+      : C.COLORS.rival;
     this.team = [
       new Player({ shirt: T.shirt, shorts: T.shorts, hair: T.hair[0], side: 1 }),
       new Player({ shirt: T.shirt, shorts: T.shorts, hair: T.hair[1], side: 1, hairStyle: 1 }),

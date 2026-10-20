@@ -158,21 +158,21 @@ export const META = {
       name: 'Liga Bronce', stars: 1, mult: 1,
       clubs: [
         { name: 'Pádel Ribera', stars: 1 }, { name: 'CD Pinar Bajo', stars: 1 },
-        { name: 'Club Olivo', stars: 2 }, { name: 'Raqueta Norte', stars: 2 }, { name: 'AD Las Dunas', stars: 1 },
+        { name: 'Club Olivo', stars: 2 }, { name: 'Raqueta Norte', stars: 2 }, { name: 'AD Las Dunas', stars: 1 }, { name: 'Club Brisa', stars: 2 },
       ],
     },
     {
       name: 'Liga Plata', stars: 2, mult: 1.6,
       clubs: [
         { name: 'Marea Alta PC', stars: 3 }, { name: 'Club Cierzo', stars: 2 },
-        { name: 'Muro Azul', stars: 3 }, { name: 'Pádel Sierra', stars: 2 }, { name: 'CD Faro Viejo', stars: 2 },
+        { name: 'Muro Azul', stars: 3 }, { name: 'Pádel Sierra', stars: 2 }, { name: 'CD Faro Viejo', stars: 2 }, { name: 'Pádel Alcor', stars: 3 },
       ],
     },
     {
       name: 'Liga Oro', stars: 4, mult: 2.5,
       clubs: [
         { name: 'Real Bandeja', stars: 5 }, { name: 'Víbora Club', stars: 4 },
-        { name: 'Cristal Norte', stars: 4 }, { name: 'Atlético Globo', stars: 5 }, { name: 'Club Chiquita', stars: 4 },
+        { name: 'Cristal Norte', stars: 4 }, { name: 'Atlético Globo', stars: 5 }, { name: 'Club Chiquita', stars: 4 }, { name: 'Gran Pared', stars: 5 },
       ],
     },
   ],

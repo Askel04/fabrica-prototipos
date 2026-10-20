@@ -1,6 +1,6 @@
 // Juega un partido completo: apunta, pulsa Siguiente y golpea (resolveHit directo) hasta el final.
 import { open } from './pw.mjs';
-const { browser, page, errors, waitFor, shot } = await open('http://localhost:5173/?speed=4');
+const { browser, page, errors, waitFor, shot } = await open('http://localhost:5173/?speed=4&match');
 const S = 'window.__padel.scene';
 let n = 0, shotN = 0;
 const t0 = Date.now();

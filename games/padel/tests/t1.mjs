@@ -1,6 +1,6 @@
 import { open } from './pw.mjs';
 const kind = process.argv[2] || 'flat'; // flat | top | back | late
-const { browser, page, errors, swipe, waitFor, shot } = await open();
+const { browser, page, errors, swipe, waitFor, shot } = await open('http://localhost:5173/?match');
 const S = 'window.__padel.scene';
 await page.waitForTimeout(800);
 await shot('01-inicio');
@@ -36,7 +36,7 @@ if (await page.evaluate(`${S}.phase`) === 'tactical') {
   await shot('08-vuelo');
 }
 await waitFor(`${S}.phase === 'pointEnd' || ${S}.phase === 'tactical'`, null, 20000);
-console.log('fase final', await page.evaluate(`${S}.phase`), await page.evaluate(`JSON.stringify(${S}.points)`), await page.evaluate(`JSON.stringify(${S}.shot.outcome)`));
+console.log('fase final', await page.evaluate(`${S}.phase`), await page.evaluate(`JSON.stringify(${S}.match.pts)`), await page.evaluate(`JSON.stringify(${S}.shot.outcome)`));
 await shot('09-fin');
 console.log('ERRORES:', errors.length ? errors : 0);
 await browser.close();
