@@ -32,3 +32,7 @@ Prototipos jugables en móvil lo más rápido posible. Si no divierte, se descar
 - Prototipo (1–2 días) → test de diversión con 5 personas: ¿piden otra partida sin decírselo?
 - Test web (itch.io/GitHub Pages) → medir sesión y retorno al día siguiente
 - Pulido + monetización: recompensados opcionales, intersticiales a partir del nivel 10–15 y espaciados, sin banners, IAP "Quitar anuncios"
+
+## Herramientas instaladas
+- Skills oficiales de Phaser 4 (`phaserjs/phaser`) en `.claude/skills/`: tienen prioridad ante cualquier solapamiento.
+- awesome-gamedev-agent-skills, plugins `router` y `web-engines` (proyecto): sus `phaser-core`/`phaser-arcade-physics` ya apuntan a Phaser 4.2; si contradicen a las oficiales, mandan las oficiales.
