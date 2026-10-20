@@ -96,3 +96,11 @@ html, body {
 .score .pts { background: #fff; color: #0b1630; border-radius: calc(var(--u) * 1.5); padding: 0 calc(var(--u) * 2); min-width: calc(var(--u) * 10); text-align: center; }
 .score .g { color: #ffcc33; }
 .score .r { color: #ff7a70; }
+
+.vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, #0a1a3acc 100%);
+  animation: vin .3s ease-out;
+}
+@keyframes vin { from { opacity: 0; } to { opacity: 1; } }
+.ring.approach { border-width: calc(var(--u) * .5); border-color: #ffe066; box-shadow: none; }

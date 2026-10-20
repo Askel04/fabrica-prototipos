@@ -111,6 +111,11 @@ export const CONFIG = {
   POINT_END_DELAY: 1.6, // s reales
 
   // Juice
+  HIT_STOP: 0.09, // s reales de congelación al golpear
+  RING_APPROACH: 1.8, // el aro empieza este múltiplo más grande y se cierra justo en el contacto ideal
+  CAM_FOLLOW_X: 0.3, // la cámara principal sigue la bola lateralmente
+  CAM_FOLLOW_Z: 0.12,
+  CAM_FOLLOW_SMOOTH: 4,
   VIBRATE_HIT: 25,
   VIBRATE_PERFECT: [20, 30, 40],
   SHAKE_HIT: 0.06,

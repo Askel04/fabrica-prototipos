@@ -130,6 +130,8 @@ export class MatchScene {
     this.camT = 1;
     this.camDur = 1;
     this.shake = 0;
+    this.hitStop = 0;
+    this.follow = new THREE.Vector3();
     this.timers = [];
   }
 
@@ -430,9 +432,11 @@ export class MatchScene {
     this.blendCamera({ pos: [cp.x + D, cp.y + 1.0, cp.z - A], look: [cp.x, cp.y + 0.3, cp.z - A] }, 0.3);
     const L = this.layer;
     L.innerHTML = '';
+    el('div', 'vignette', L);
     el('div', 'hint', L, 'Desliza sobre la bola<small>↗ liftado · → plano · ↘ cortado</small>');
     this.ghost = el('div', 'ring ghost', L);
     this.ring = el('div', 'ring', L);
+    this.approach = el('div', 'ring approach', L);
     el('div', 'dot', this.ring);
     this.swipeCv = el('canvas', 'swipe', L);
     this.swipeCv.width = this.app.width;
@@ -453,6 +457,13 @@ export class MatchScene {
     Object.assign(this.ring.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${2 * r}px`, height: `${2 * r}px` });
     this.ring.style.borderColor = near ? '#4cd964' : '#fff';
     Object.assign(this.ghost.style, { left: `${g.x}px`, top: `${g.y}px`, width: `${2 * r}px`, height: `${2 * r}px` });
+    // Aro de aproximación: se cierra sobre la bola justo en el contacto ideal
+    const k = clamp(-t / C.IMPACT_LEAD, 0, 1);
+    const ra = r * (1 + (C.RING_APPROACH - 1) * k);
+    Object.assign(this.approach.style, {
+      left: `${b.x}px`, top: `${b.y}px`, width: `${2 * ra}px`, height: `${2 * ra}px`,
+      opacity: t > 0 ? 0 : 1,
+    });
 
     // Estela del dedo
     const ctx = this.swipeCv.getContext('2d');
@@ -528,6 +539,7 @@ export class MatchScene {
 
     // Juice
     hitSound(this.power);
+    this.hitStop = C.HIT_STOP * (q > 0.85 ? 1.6 : 1);
     this.flash();
     this.burst(pos, q > 0.85 ? 0xffe066 : 0xffffff, q > 0.85 ? 24 : 12, 4);
     this.shake = C.SHAKE_HIT * (0.5 + this.power);
@@ -586,7 +598,11 @@ export class MatchScene {
       this.timeScale = Math.min(1, this.timeScale + dt / 0.4);
       if (this.timeScale >= 1) this.rampTime = false;
     }
-    const gdt = dt * this.timeScale;
+    let gdt = dt * this.timeScale;
+    if (this.hitStop > 0) {
+      this.hitStop -= dt;
+      gdt = 0;
+    }
     this.gameTime += gdt;
 
     if (this.shot && this.phase !== 'serve') this.updateBall();
@@ -687,12 +703,19 @@ export class MatchScene {
       this.cam.pos.lerpVectors(this.camFrom.pos, this.camTo.pos, k);
       this.cam.look.lerpVectors(this.camFrom.look, this.camTo.look, k);
     }
-    this.camera.position.copy(this.cam.pos);
+    // Seguimiento suave de la bola con la cámara principal
+    const fx = this.phase === 'live' || this.phase === 'serve' ? this.ball.position.x * C.CAM_FOLLOW_X : 0;
+    const fz = this.phase === 'live' || this.phase === 'serve' ? this.ball.position.z * C.CAM_FOLLOW_Z : 0;
+    const kf = 1 - Math.exp(-C.CAM_FOLLOW_SMOOTH * dt);
+    this.follow.x += (fx - this.follow.x) * kf;
+    this.follow.z += (fz - this.follow.z) * kf;
+    this.camera.position.copy(this.cam.pos).add(this.follow);
     if (this.shake > 0.001) {
       this.camera.position.x += rand(-1, 1) * this.shake;
       this.camera.position.y += rand(-1, 1) * this.shake;
       this.shake *= Math.pow(0.002, dt);
     }
-    this.camera.lookAt(this.cam.look);
+    this.v3.copy(this.cam.look).add(this.follow);
+    this.camera.lookAt(this.v3);
   }
 }
