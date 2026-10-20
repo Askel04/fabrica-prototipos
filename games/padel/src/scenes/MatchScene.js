@@ -131,6 +131,8 @@ export class MatchScene {
     this.camDur = 1;
     this.shake = 0;
     this.hitStop = 0;
+    this.fovKick = 0;
+    this.squash = 0;
     this.follow = new THREE.Vector3();
     this.timers = [];
   }
@@ -321,6 +323,10 @@ export class MatchScene {
     const speed = lerp(C.SHOT_SPEED_MIN, C.SHOT_SPEED_MAX, power) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR);
     const sol = solveShot(pos, target, speed, spin, 0, 0);
     hitSound(power);
+    if (kind === 'smash') {
+      this.shake = C.SHAKE_SMASH * 0.5;
+      this.fovKick = 0.5;
+    }
     this.doHit(player, pos, sol.v, spin, 0, kind);
   }
 
@@ -345,6 +351,11 @@ export class MatchScene {
     };
     this.toast(win ? '¡PUNTO!' : 'Punto rival', reasons[reason] || reason, win ? '#ffe066' : '#ff8a80');
     pointSound(win);
+    if (reason === 'por 3' || reason === 'por 4') {
+      this.burst(this.ball.position, 0xffcc33, 20, 6);
+      this.burst(this.ball.position, 0x4fb3ff, 20, 6);
+      this.shake = 0.15;
+    }
     vibrate(win ? [30, 40, 60] : 60);
     (win ? this.team : this.rivals).forEach((p) => (p.celebrate = 1.2));
     this.after(C.POINT_END_DELAY, () => this.startPoint());
@@ -549,10 +560,19 @@ export class MatchScene {
     this.burst(pos, q > 0.85 ? 0xffe066 : 0xffffff, q > 0.85 ? 24 : 12, 4);
     this.shake = C.SHAKE_HIT * (0.5 + this.power);
     vibrate(q > 0.85 ? C.VIBRATE_PERFECT : C.VIBRATE_HIT);
+    if (kind === 'smash') this.smashJuice(pos);
     const label = q > 0.85 ? '¡PERFECTO!' : q > 0.55 ? '¡Bien!' : tErr < 0 ? 'Pronto' : 'Tarde';
     const spinLbl = spin > 0.15 ? 'Liftado' : spin < -0.15 ? 'Cortado' : 'Plano';
     this.toast(label, spinLbl + (kind === 'smash' ? ' · Remate' : ''), q > 0.85 ? '#ffe066' : '#fff');
     this.exitImpact();
+  }
+
+  smashJuice(pos) {
+    this.shake = C.SHAKE_SMASH;
+    this.hitStop = Math.max(this.hitStop, C.SMASH_HIT_STOP);
+    this.fovKick = 1;
+    this.burst(pos, 0xff9d2e, 20, 6);
+    vibrate([40, 30, 80]);
   }
 
   exitImpact() {
@@ -641,7 +661,7 @@ export class MatchScene {
     while (s.evIdx < s.path.events.length && s.path.events[s.evIdx].t <= t) {
       const e = s.path.events[s.evIdx++];
       if (this.phase === 'pointEnd' && e.t > s.outcome.t + 0.5) continue;
-      if (e.type === 'ground') { bounceSound(); this.burst(e, 0xbfd6ff, 5, 1.5); }
+      if (e.type === 'ground') { bounceSound(); this.burst(e, 0xbfd6ff, 5, 1.5); this.squash = 1; }
       else if (e.type === 'wall') { glassSound(); this.shake = Math.max(this.shake, 0.03); }
       else if (e.type === 'net') netSound();
     }
@@ -677,16 +697,20 @@ export class MatchScene {
     const h = this.ball.position.y;
     this.blob.scale.setScalar(1 + h * 0.3);
     this.blob.material.opacity = clamp(0.4 - h * 0.05, 0.1, 0.4);
+    const gap = s.kind === 'smash' ? 4 : 2; // estela más larga en remates
     this.trailPos.unshift(this.ball.position.clone());
-    if (this.trailPos.length > this.trail.length * 2) this.trailPos.pop();
+    if (this.trailPos.length > this.trail.length * 4) this.trailPos.pop();
     this.trail.forEach((m, i) => {
-      const p = this.trailPos[(i + 1) * 2 - 1];
+      const p = this.trailPos[(i + 1) * gap - 1];
       m.visible = !!p && this.phase !== 'tactical';
       if (p) m.position.copy(p);
     });
   }
 
   updateParticles(dt) {
+    if (this.squash > 0) this.squash = Math.max(0, this.squash - dt / C.SQUASH_TIME);
+    const sq = C.SQUASH * Math.sin(this.squash * Math.PI) ;
+    this.ball.scale.set(1 + sq * 0.6, 1 - sq, 1 + sq * 0.6);
     for (const p of this.parts) {
       if (p.life <= 0) continue;
       p.life -= dt;
@@ -719,6 +743,12 @@ export class MatchScene {
       this.camera.position.x += rand(-1, 1) * this.shake;
       this.camera.position.y += rand(-1, 1) * this.shake;
       this.shake *= Math.pow(0.002, dt);
+    }
+    if (this.fovKick > 0) this.fovKick = Math.max(0, this.fovKick - dt * C.FOV_KICK_DECAY);
+    const fov = C.CAM_FOV - C.FOV_KICK_SMASH * Math.sin(this.fovKick * Math.PI * 0.5);
+    if (fov !== this.camera.fov) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
     }
     this.v3.copy(this.cam.look).add(this.follow);
     this.camera.lookAt(this.v3);

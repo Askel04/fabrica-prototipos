@@ -119,4 +119,10 @@ export const CONFIG = {
   VIBRATE_HIT: 25,
   VIBRATE_PERFECT: [20, 30, 40],
   SHAKE_HIT: 0.06,
+  SHAKE_SMASH: 0.22,
+  SMASH_HIT_STOP: 0.16,
+  FOV_KICK_SMASH: 12, // grados que se cierra la cámara en un remate
+  FOV_KICK_DECAY: 3, // por segundo
+  SQUASH: 0.45, // aplastamiento de la bola al botar
+  SQUASH_TIME: 0.12,
 };

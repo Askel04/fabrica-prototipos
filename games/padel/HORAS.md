@@ -8,3 +8,4 @@ Inicio de la prueba: 2026-10-20 10:39 UTC
 | 1. Pista + personajes + punto con golpe | 10:41 | 10:55 | 0:14 | Física con Magnus/rebotes, reglas, IA, pausa táctica, impacto con deslizamiento. Probado con Playwright (plano/liftado/cortado/tarde), 0 errores |
 | 2. Ajuste de sensación — ajuste 1 | 10:56 | 11:00 | 0:04 | Hit-stop, aro de aproximación de timing, viñeta en cámara lenta, cámara que sigue la bola. Pendiente de feedback |
 | 2. Ajuste de sensación — ajuste 2 | 11:01 | 11:04 | 0:03 | El personaje prepara el golpe en cámara lenta y lo suelta al deslizar; vibración y 'whoosh' al entrar en cámara lenta |
+| 2. Ajuste de sensación — ajuste 3 | 11:05 | 11:08 | 0:03 | Remate: zoom de cámara (FOV), temblor fuerte, hit-stop largo, estela larga y chispas; bola que se aplasta al botar; confeti en el por 3 |
