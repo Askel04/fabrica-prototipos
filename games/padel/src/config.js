@@ -94,6 +94,8 @@ export const CONFIG = {
     errBase: 1.4, // m de error
     missChance: 0.08,
     missChanceFastBall: 0.25, // extra si la bola llega muy rápida
+    missPerfect: 0.2, // extra si tu golpe fue perfecto
+    missPerRally: 0.03, // extra por cada golpe del intercambio (cansancio)
     fastBall: 20, // m/s
     powerMin: 0.35,
     powerMax: 0.75,
@@ -106,6 +108,12 @@ export const CONFIG = {
   CAM_MAIN: { pos: [0, 10, 17], look: [0, 0, -0.5] },
   CAM_TACTICAL: { pos: [0, 12, 15], look: [0, 0, -3] },
   CAM_BLEND: 0.45, // s reales para volver a la cámara principal
+
+  // Partido
+  GAMES_TO_WIN: 2, // mejor de 3 juegos
+  FIRST_SERVE: -1, // equipo que saca el primer juego (-1 rival)
+  SERVE_CONTACT_H: 0.75, // altura de golpeo en tu saque (bola botada)
+  MATCH_END_DELAY: 2.2, // s reales
 
   // Ritmo
   POINT_END_DELAY: 1.6, // s reales
@@ -125,4 +133,56 @@ export const CONFIG = {
   FOV_KICK_DECAY: 3, // por segundo
   SQUASH: 0.45, // aplastamiento de la bola al botar
   SQUASH_TIME: 0.12,
+};
+
+// Meta-juego: carrera, energía, recompensas y ligas (nombres inventados)
+export const META = {
+  START_CLUB: 'CP Los Almendros',
+  SEASON_MATCHES: 5,
+  ENERGY_MAX: 5,
+  ENERGY_RECHARGE_S: 600, // 10 min por punto de energía
+  XP_BASE: 100, // XP para subir del nivel n = XP_BASE * n
+  XP_WIN: 40,
+  XP_LOSE: 15,
+  COINS_WIN: 60,
+  COINS_LOSE: 15,
+  UPGRADE_BASE_COST: 40, // coste = base * (nivel + 1)
+  STAT_MAX: 10,
+  OFFER_MAX_POS: 3, // quedar entre los 3 primeros trae oferta de la liga superior
+  // Efecto por nivel de stat
+  STAT_POWER: 0.06, // +6 % de velocidad de bola
+  STAT_PRECISION: 0.07, // -7 % de error
+  STAT_SPEED: 0.08, // +8 % de velocidad de carrera
+  LEAGUES: [
+    {
+      name: 'Liga Bronce', stars: 1, mult: 1,
+      clubs: [
+        { name: 'Pádel Ribera', stars: 1 }, { name: 'CD Pinar Bajo', stars: 1 },
+        { name: 'Club Olivo', stars: 2 }, { name: 'Raqueta Norte', stars: 2 }, { name: 'AD Las Dunas', stars: 1 },
+      ],
+    },
+    {
+      name: 'Liga Plata', stars: 2, mult: 1.6,
+      clubs: [
+        { name: 'Marea Alta PC', stars: 3 }, { name: 'Club Cierzo', stars: 2 },
+        { name: 'Muro Azul', stars: 3 }, { name: 'Pádel Sierra', stars: 2 }, { name: 'CD Faro Viejo', stars: 2 },
+      ],
+    },
+    {
+      name: 'Liga Oro', stars: 4, mult: 2.5,
+      clubs: [
+        { name: 'Real Bandeja', stars: 5 }, { name: 'Víbora Club', stars: 4 },
+        { name: 'Cristal Norte', stars: 4 }, { name: 'Atlético Globo', stars: 5 }, { name: 'Club Chiquita', stars: 4 },
+      ],
+    },
+  ],
+  // Dificultad de la IA según estrellas del rival (1-5)
+  aiFor(stars) {
+    return {
+      errBase: 1.9 - stars * 0.22,
+      missChance: 0.16 - stars * 0.025,
+      powerMax: 0.6 + stars * 0.06,
+      lobChance: 0.1 + stars * 0.03,
+    };
+  },
 };

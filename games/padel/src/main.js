@@ -51,9 +51,11 @@ function fit() {
 window.addEventListener('resize', fit);
 fit();
 
+// ?speed=N acelera el juego (solo para pruebas automáticas)
+const SPEED = Number(new URLSearchParams(location.search).get('speed')) || 1;
 let last = performance.now();
 function loop(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const dt = Math.min(0.05, (now - last) / 1000) * SPEED;
   last = now;
   app.scene?.update(dt);
   requestAnimationFrame(loop);

@@ -9,3 +9,4 @@ Inicio de la prueba: 2026-10-20 10:39 UTC
 | 2. Ajuste de sensación — ajuste 1 | 10:56 | 11:00 | 0:04 | Hit-stop, aro de aproximación de timing, viñeta en cámara lenta, cámara que sigue la bola. Pendiente de feedback |
 | 2. Ajuste de sensación — ajuste 2 | 11:01 | 11:04 | 0:03 | El personaje prepara el golpe en cámara lenta y lo suelta al deslizar; vibración y 'whoosh' al entrar en cámara lenta |
 | 2. Ajuste de sensación — ajuste 3 | 11:05 | 11:08 | 0:03 | Remate: zoom de cámara (FOV), temblor fuerte, hit-stop largo, estela larga y chispas; bola que se aplasta al botar; confeti en el por 3 |
+| 3. Puntuación completa y partido | 11:09 | 11:19 | | 15-30-40-juego con punto de oro, mejor de 3 juegos, saque alterno por juego (tu saque con la misma mecánica: la bota y golpeas), marcador con indicador de saque. IA falla más ante golpes perfectos y rallies largos. Partido completo automático con Playwright 2-0, 0 errores |

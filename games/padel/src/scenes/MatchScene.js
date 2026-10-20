@@ -1,6 +1,6 @@
 // Escena de partido: bola con física, IA rival, pausa táctica y fase de impacto en cámara lenta.
 import * as THREE from 'three';
-import { CONFIG as C } from '../config.js';
+import { CONFIG as C, META } from '../config.js';
 import { simulate, sampleAt, solveShot } from '../physics.js';
 import { judge, findContact } from '../rules.js';
 import { buildCourt } from '../court.js';
@@ -59,7 +59,7 @@ export class MatchScene {
       new Player({ shirt: R.shirt, shorts: R.shorts, hair: R.hair[1], side: -1 }),
     ];
     for (const p of [...this.team, ...this.rivals]) scene.add(p.root);
-    this.team.forEach((p) => (p.speed = C.PLAYER_SPEED * (1 + this.stats.speed * 0.08)));
+    this.team.forEach((p) => (p.speed = C.PLAYER_SPEED * (1 + this.stats.speed * META.STAT_SPEED)));
 
     // Bola, sombra y estela
     this.ball = new THREE.Mesh(
@@ -122,8 +122,14 @@ export class MatchScene {
     this.shot = null;
     this.aim = { x: 0, z: -7 };
     this.power = 0.4;
-    this.points = { 1: 0, [-1]: 0 };
-    this.serverIdx = 0;
+    this.match = {
+      pts: { 1: 0, [-1]: 0 },
+      games: { 1: 0, [-1]: 0 },
+      serveTeam: C.FIRST_SERVE,
+      rot: { 1: 0, [-1]: 0 }, // quién saca dentro de cada pareja
+      totalPts: { 1: 0, [-1]: 0 },
+      over: false,
+    };
     this.cam = { pos: new THREE.Vector3(...C.CAM_MAIN.pos), look: new THREE.Vector3(...C.CAM_MAIN.look) };
     this.camFrom = null;
     this.camTo = null;
@@ -204,10 +210,20 @@ export class MatchScene {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
+  ptsLabel(side) {
+    const m = this.match;
+    return ['0', '15', '30', '40'][Math.min(3, m.pts[side])];
+  }
+
   renderScore() {
-    this.score.innerHTML = `<div class="t g">TÚ<small>${this.points[1]}</small></div>
-      <div class="pts">${this.points[1]} - ${this.points[-1]}</div>
-      <div class="t r">RIVAL<small>${this.points[-1]}</small></div>`;
+    const m = this.match;
+    const serve = (s) => (m.serveTeam === s ? '<i class="sv"></i>' : '<i class="sv off"></i>');
+    const name = this.params.names || { 1: 'TÚ', [-1]: 'RIVAL' };
+    const golden = m.pts[1] === 3 && m.pts[-1] === 3;
+    this.score.innerHTML = `<table>
+      <tr class="g"><td>${serve(1)}${name[1]}</td><td class="gm">${m.games[1]}</td><td class="pt">${this.ptsLabel(1)}</td></tr>
+      <tr class="r"><td>${serve(-1)}${name[-1]}</td><td class="gm">${m.games[-1]}</td><td class="pt">${this.ptsLabel(-1)}</td></tr>
+    </table>${golden ? '<div class="gold">PUNTO DE ORO</div>' : ''}`;
   }
 
   racketPoint(p) {
@@ -225,7 +241,7 @@ export class MatchScene {
   goHome(team) {
     const side = team[0].side;
     team.forEach((p, i) => {
-      p.speed = side === 1 ? C.PLAYER_SPEED * (1 + this.stats.speed * 0.08) : C.PLAYER_SPEED;
+      p.speed = side === 1 ? C.PLAYER_SPEED * (1 + this.stats.speed * META.STAT_SPEED) : C.PLAYER_SPEED;
       p.moveTo(i === 0 ? -C.HOME_X : C.HOME_X, side * C.HOME_BACK_Z);
     });
   }
@@ -233,6 +249,8 @@ export class MatchScene {
   // ---------- flujo del punto ----------
   startPoint() {
     this.phase = 'serve';
+    this.rally = 0;
+    this.lastQ = 0;
     this.shot = null;
     this.layer.innerHTML = '';
     this.marker.visible = false;
@@ -250,15 +268,47 @@ export class MatchScene {
     this.team[1].pos.set(C.HOME_X, 0, C.HOME_BACK_Z);
     this.rivals[0].pos.set(-C.HOME_X, 0, -C.HOME_BACK_Z);
     this.rivals[1].pos.set(C.HOME_X, 0, -C.HOME_BACK_Z);
-    const server = this.rivals[this.serverIdx];
-    server.pos.z = -9.4;
-    this.serverIdx ^= 1;
+    // Saque: alterna lado (derecha en puntos pares) y pareja por juego
+    const m = this.match;
+    const st = m.serveTeam;
+    const team = st === 1 ? this.team : this.rivals;
+    const even = (m.pts[1] + m.pts[-1]) % 2 === 0;
+    const sx = (even ? 1 : -1) * st * C.HOME_X; // derecha del que saca
+    const idx = m.rot[st];
+    const server = team[idx];
+    team[1 - idx].pos.set(-sx, 0, st * 3); // el compañero del que saca, a la red
+    server.pos.set(sx - 0.55 * st, 0, st * 9.4);
     const hand = this.racketPoint(server);
-    this.ball.position.set(hand.x, 1.0, hand.z + 0.3);
-    this.after(0.9, () => {
-      server.swing('drive');
-      this.after(0.12, () => this.aiShot(server, { x: hand.x, y: 0.95, z: hand.z + 0.3 }, { serve: true }));
-    });
+    const bz = hand.z - st * 0.3;
+    this.ball.position.set(hand.x, 1.0, bz);
+    if (st === -1) {
+      this.after(0.9, () => {
+        server.swing('drive');
+        this.after(0.12, () => this.aiShot(server, { x: hand.x, y: 0.95, z: bz }, { serve: true }));
+      });
+    } else {
+      this.after(0.6, () => this.playerServe(idx, { x: hand.x, y: 1.1, z: bz }));
+    }
+  }
+
+  // Tu saque: la bota el que saca y se golpea con la misma mecánica
+  playerServe(idx, p) {
+    const path = simulate({ p, v: { x: 0, y: 0, z: 0 } }, 3);
+    const bounce = path.events.find((e) => e.type === 'ground');
+    let t = bounce ? bounce.t + 0.05 : 0.4;
+    const q = { x: 0, y: 0, z: 0 };
+    let prevY = 0;
+    for (; t < path.duration; t += 1 / 120) {
+      sampleAt(path, t, q);
+      if (q.y < prevY && q.y <= C.SERVE_CONTACT_H) break;
+      prevY = q.y;
+    }
+    const contact = { t, idx, pos: { ...q }, bounced: true, serve: true };
+    this.shot = {
+      path, t0: this.gameTime, hitter: -1, contact, evIdx: 0, kind: 'drive', spin: 0,
+      outcome: { t: t + 0.8, winner: -1, reason: 'fallo' },
+    };
+    this.phase = 'live';
   }
 
   doHit(player, pos, v, spin, side, kind) {
@@ -272,12 +322,15 @@ export class MatchScene {
       recvTeam.map((p) => this.racketPoint(p)),
       recvTeam[0].speed,
     );
+    this.rally++;
     this.shot = { path, t0: this.gameTime, hitter, outcome, contact, evIdx: 0, kind, spin };
     if (this.phase === 'serve') this.phase = 'live';
     if (contact && hitter === 1) {
       // La IA puede fallar, sobre todo con bolas rápidas
       const sp = Math.hypot(v.x, v.y, v.z);
-      const miss = this.ai.missChance + (sp > this.ai.fastBall ? this.ai.missChanceFastBall : 0);
+      const A = this.ai;
+      const miss = A.missChance + (sp > A.fastBall ? A.missChanceFastBall : 0)
+        + (this.lastQ > 0.85 ? A.missPerfect : 0) + this.rally * A.missPerRally;
       contact.miss = Math.random() < miss;
     }
     this.goHome(hitTeam);
@@ -334,9 +387,21 @@ export class MatchScene {
     if (this.phase === 'pointEnd') return;
     this.phase = 'pointEnd';
     this.layer.innerHTML = '';
-    this.points[winner]++;
-    this.renderScore();
     const win = winner === 1;
+    const m = this.match;
+    m.pts[winner]++;
+    m.totalPts[winner]++;
+    let gameWon = false;
+    // Sin ventaja: a 40-40 punto de oro, el siguiente gana
+    if (m.pts[winner] >= 4) {
+      gameWon = true;
+      m.games[winner]++;
+      m.pts[1] = 0;
+      m.pts[-1] = 0;
+      m.rot[m.serveTeam] ^= 1;
+      m.serveTeam = -m.serveTeam;
+    }
+    this.renderScore();
     const reasons = {
       'doble bote': win ? 'No llegan' : 'No llegaste',
       red: 'A la red',
@@ -358,7 +423,31 @@ export class MatchScene {
     }
     vibrate(win ? [30, 40, 60] : 60);
     (win ? this.team : this.rivals).forEach((p) => (p.celebrate = 1.2));
-    this.after(C.POINT_END_DELAY, () => this.startPoint());
+    if (gameWon) {
+      this.after(0.9, () => this.toast(win ? '¡JUEGO!' : 'Juego rival', `${m.games[1]} - ${m.games[-1]}`, win ? '#ffe066' : '#ff8a80'));
+    }
+    if (m.games[winner] >= C.GAMES_TO_WIN) {
+      m.over = true;
+      this.after(C.MATCH_END_DELAY, () => this.endMatch(winner));
+      return;
+    }
+    this.after(C.POINT_END_DELAY + (gameWon ? 0.8 : 0), () => this.startPoint());
+  }
+
+  endMatch(winner) {
+    const m = this.match;
+    const result = { win: winner === 1, games: { ...m.games }, points: { ...m.totalPts } };
+    if (this.params.onEnd) {
+      this.params.onEnd(result);
+      return;
+    }
+    this.phase = 'over';
+    const L = this.layer;
+    L.innerHTML = '';
+    el('div', 'hint', L, `${result.win ? '¡VICTORIA!' : 'Derrota'}<small>${m.games[1]} - ${m.games[-1]}</small>`);
+    const b = el('button', 'btn', L, 'OTRA PARTIDA');
+    Object.assign(b.style, { left: '50%', bottom: 'calc(var(--u) * 20)', transform: 'translateX(-50%)' });
+    b.addEventListener('click', () => this.app.go(MatchScene, this.params));
   }
 
   // ---------- pausa táctica ----------
@@ -391,8 +480,7 @@ export class MatchScene {
   }
 
   shotSpeed(power, spin) {
-    const pw = power * (1 + this.stats.power * 0.06);
-    return lerp(C.SHOT_SPEED_MIN, C.SHOT_SPEED_MAX, pw) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR);
+    return lerp(C.SHOT_SPEED_MIN, C.SHOT_SPEED_MAX, power) * (1 + this.stats.power * META.STAT_POWER) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR);
   }
 
   updatePreview() {
@@ -541,13 +629,14 @@ export class MatchScene {
     const timingQ = clamp(1 - Math.abs(tErr) / C.TIMING_WINDOW, 0, 1);
     const centerQ = clamp(1 - Math.abs(offset), 0, 1);
     const q = timingQ * (0.4 + 0.6 * centerQ);
-    const errR = lerp(C.PRECISION_MIN_ERR, C.PRECISION_MAX_ERR, 1 - q) * (1 - this.stats.precision * 0.07);
+    const errR = lerp(C.PRECISION_MIN_ERR, C.PRECISION_MAX_ERR, 1 - q) * (1 - this.stats.precision * META.STAT_PRECISION);
     const e = randDisk(errR);
     const target = { x: this.aim.x + e.x, z: this.aim.z + e.z };
     const dev = (-offset * C.SIDE_DEV_MAX_DEG * Math.PI) / 180;
     const side = offset * C.SIDESPIN_FROM_OFFSET;
     const kind = pos.y > C.SMASH_HEIGHT ? 'smash' : 'drive';
     const sol = solveShot(pos, target, this.shotSpeed(this.power, spin), spin, side, dev);
+    this.lastQ = q;
     player.swingKind = kind;
     player.release();
     this.doHit(player, pos, sol.v, spin, side, kind);
