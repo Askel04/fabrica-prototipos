@@ -1,5 +1,5 @@
 ---
-name: juez
+name: juez-juego
 description: Lee los informes del optimista y del pesimista sobre una idea de juego y emite puntuación y veredicto. Úsalo desde /evaluar-idea.
 tools: Read
 ---

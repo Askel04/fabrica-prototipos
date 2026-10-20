@@ -7,7 +7,7 @@ Idea a evaluar: $ARGUMENTS
 
 1. Lee `CLAUDE.md` y `tracker.md`.
 2. Lanza en paralelo, en un mismo mensaje, los subagentes `optimista` y `pesimista`. Pasa a cada uno la idea y el contenido de `CLAUDE.md`, y recuérdales que respondan en máximo 10 líneas.
-3. Cuando terminen ambos, lanza el subagente `juez` con la idea y los dos informes completos.
+3. Cuando terminen ambos, lanza el subagente `juez-juego` con la idea y los dos informes completos.
 4. Añade una fila al final de la tabla de `tracker.md`:
    - Juego: nombre corto de la idea
    - Fase: el veredicto del juez (Prototipar / Reserva / Descartado)
