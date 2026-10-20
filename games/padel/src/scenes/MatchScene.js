@@ -1,10 +1,12 @@
 // Escena de partido: bola con física, IA rival, pausa táctica y fase de impacto en cámara lenta.
 import * as THREE from 'three';
 import { CONFIG as C, META } from '../config.js';
-import { simulate, sampleAt, solveShot } from '../physics.js';
+import { simulate, sampleAt } from '../physics.js';
 import { judge, findContact } from '../rules.js';
 import { buildCourt } from '../court.js';
-import { Player } from '../player.js';
+import { Player, swingDur, SWING_HIT_U } from '../player.js';
+import { analyzeStroke } from '../stroke.js';
+import { classify, buildShot } from '../shots.js';
 import { hitSound, bounceSound, glassSound, netSound, whiffSound, pointSound, whooshSound } from '../utils/sound.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -12,6 +14,11 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 const vibrate = (p) => navigator.vibrate?.(p);
+const DEG = Math.PI / 180;
+const FAMILY_LABEL = {
+  plano: 'Plano', liftado: 'Liftado', cortado: 'Cortado', globo: 'Globo', volea: 'Volea',
+  bandeja: 'Bandeja', vibora: 'Víbora', rulo: 'Rulo', remate: 'Remate', saque: 'Saque',
+};
 
 function el(tag, cls, parent, html) {
   const e = document.createElement(tag);
@@ -89,20 +96,42 @@ export class MatchScene {
     }
     this.trailPos = [];
 
-    // Marcador de objetivo y arco de previsualización
-    this.marker = new THREE.Mesh(
-      new THREE.RingGeometry(0.35, 0.5, 32),
-      new THREE.MeshBasicMaterial({ color: C.COLORS.target, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
-    );
-    this.marker.rotation.x = -Math.PI / 2;
-    this.marker.position.y = 0.02;
-    this.marker.visible = false;
-    scene.add(this.marker);
-    this.arcN = 48;
-    this.arcMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    this.arc = new THREE.InstancedMesh(new THREE.SphereGeometry(0.045, 6, 4), this.arcMat, this.arcN);
-    this.arc.visible = false;
-    scene.add(this.arc);
+    // Flecha de dirección y fuerza (apunta a +z; se gira con rotation.y = rumbo)
+    this.arrowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false, side: THREE.DoubleSide });
+    this.arrow = new THREE.Group();
+    this.arrowShaft = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.02, 1), this.arrowMat);
+    const head = new THREE.Shape();
+    head.moveTo(-0.6, 0);
+    head.lineTo(0.6, 0);
+    head.lineTo(0, 0.9);
+    head.closePath();
+    this.arrowHead = new THREE.Mesh(new THREE.ShapeGeometry(head), this.arrowMat);
+    this.arrowHead.rotation.x = Math.PI / 2;
+    this.arrow.add(this.arrowShaft, this.arrowHead);
+    this.arrow.visible = false;
+    scene.add(this.arrow);
+    this.yaw = null;
+    this.power = 0.6;
+
+    // Textura de la bola con costura, para leer el efecto
+    const cv = document.createElement('canvas');
+    cv.width = 128;
+    cv.height = 64;
+    const g2 = cv.getContext('2d');
+    g2.fillStyle = '#d8f23a';
+    g2.fillRect(0, 0, 128, 64);
+    g2.strokeStyle = '#ffffff';
+    g2.lineWidth = 5;
+    g2.beginPath();
+    for (let x = 0; x <= 128; x += 2) {
+      const y = 32 + Math.sin((x / 128) * Math.PI * 4) * 16;
+      x ? g2.lineTo(x, y) : g2.moveTo(x, y);
+    }
+    g2.stroke();
+    this.ball.material.map = new THREE.CanvasTexture(cv);
+    this.ball.material.color.setHex(0xffffff);
+    this.ball.material.needsUpdate = true;
+    this.ballSpin = 0;
 
     // Partículas
     this.parts = [];
@@ -250,14 +279,15 @@ export class MatchScene {
   }
 
   // ---------- flujo del punto ----------
-  startPoint() {
+  startPoint(secondServe = false) {
+    if (!secondServe) this.serveTry = 1;
     this.phase = 'serve';
     this.rally = 0;
     this.lastQ = 0;
     this.shot = null;
     this.layer.innerHTML = '';
-    this.marker.visible = false;
-    this.arc.visible = false;
+    this.arrow.visible = false;
+    this.ball.scale.setScalar(1);
     this.trailPos.length = 0;
     this.timeScale = 1;
     this.blendCamera(C.CAM_MAIN, 0.6);
@@ -286,8 +316,8 @@ export class MatchScene {
     this.ball.position.set(hand.x, 1.0, bz);
     if (st === -1) {
       this.after(0.9, () => {
-        server.swing('drive');
-        this.after(0.12, () => this.aiShot(server, { x: hand.x, y: 0.95, z: bz }, { serve: true }));
+        server.swing('saque');
+        this.after(swingDur('saque') * SWING_HIT_U, () => this.aiShot(server, { x: hand.x, y: 0.8, z: bz }, { serve: true }));
       });
     } else {
       this.after(0.6, () => this.playerServe(idx, { x: hand.x, y: 1.1, z: bz }));
@@ -306,7 +336,7 @@ export class MatchScene {
       if (q.y < prevY && q.y <= C.SERVE_CONTACT_H) break;
       prevY = q.y;
     }
-    const contact = { t, idx, pos: { ...q }, bounced: true, serve: true };
+    const contact = { t, idx, pos: { ...q }, bounced: true, serve: { boxSign: -Math.sign(p.x || 1) } };
     this.shot = {
       path, t0: this.gameTime, hitter: -1, contact, evIdx: 0, kind: 'drive', spin: 0,
       outcome: { t: t + 0.8, winner: -1, reason: 'fallo' },
@@ -314,19 +344,28 @@ export class MatchScene {
     this.phase = 'live';
   }
 
-  doHit(player, pos, v, spin, side, kind) {
+  doHit(player, pos, v, spin, side, kind, opts = {}) {
     const hitter = player.side;
     const path = simulate({ p: pos, v, spin, side });
-    const outcome = judge(path, hitter);
+    const outcome = judge(path, hitter, { serve: opts.serve });
     const recvTeam = hitter === 1 ? this.rivals : this.team;
     const hitTeam = hitter === 1 ? this.team : this.rivals;
     const contact = findContact(
       path, outcome, -hitter,
       recvTeam.map((p) => this.racketPoint(p)),
       recvTeam[0].speed,
+      C.REACTION,
+      { mustBounce: !!opts.serve },
     );
     this.rally++;
-    this.shot = { path, t0: this.gameTime, hitter, outcome, contact, evIdx: 0, kind, spin };
+    this.shot = { path, t0: this.gameTime, hitter, outcome, contact, evIdx: 0, kind, spin, power: opts.power ?? 0.5, q: opts.q ?? 1 };
+    this.ballSpin = spin;
+    if (contact && hitter === 1) {
+      // La IA decide ya su golpe para preparar la animación adecuada
+      contact.family = this.aiFamily(this.contactCtx(path, contact.t, contact.pos, false, contact.bounced));
+      const rp = this.rivals[contact.idx];
+      contact.anim = this.animFor(contact.family, rp, contact.pos);
+    }
     if (this.phase === 'serve') this.phase = 'live';
     if (contact && hitter === 1) {
       // La IA puede fallar, sobre todo con bolas rápidas
@@ -350,46 +389,74 @@ export class MatchScene {
     }
   }
 
+  /** Contexto del golpe en el punto de contacto: altura, si botó, cómo llega la bola y distancia a la red. */
+  contactCtx(path, t, pos, serve = false, bounced = true) {
+    const a = sampleAt(path, Math.max(0, t - 0.02), { x: 0, y: 0, z: 0 });
+    const b = sampleAt(path, t + 0.02, { x: 0, y: 0, z: 0 });
+    const vx = (b.x - a.x) / 0.04, vy = (b.y - a.y) / 0.04, vz = (b.z - a.z) / 0.04;
+    return { h: pos.y, bounced, vyIn: vy, speedIn: Math.hypot(vx, vy, vz), dNet: Math.abs(pos.z), serve };
+  }
+
+  /** Animación del golpe; drive pasa a revés si la bola queda en el lado contrario a la pala. */
+  animFor(family, player, pos) {
+    const anim = C.SHOTS[family].anim;
+    if (anim === 'drive' && (pos.x - player.pos.x) * player.side < -0.1) return 'reves';
+    return anim;
+  }
+
+  /** La IA elige familia según la bola que le llega. */
+  aiFamily(ctx) {
+    const A = this.ai;
+    const r = Math.random();
+    if (ctx.h >= C.SMASH_MIN_H && ctx.dNet <= C.SMASH_MAX_DNET) return r < A.smashChance ? 'remate' : r < 0.85 ? 'bandeja' : 'vibora';
+    if (ctx.h >= C.OVERHEAD_MIN_H && ctx.vyIn < -C.LOBBED_VY) return r < 0.45 ? 'bandeja' : r < 0.8 ? 'vibora' : 'rulo';
+    if (!ctx.bounced && ctx.h >= C.VOLLEY_MIN_H) return 'volea';
+    if (r < A.lobChance) return 'globo';
+    return ['plano', 'liftado', 'cortado'][Math.floor(Math.random() * 3)];
+  }
+
   aiShot(player, pos, opts = {}) {
     const side = player.side;
     const A = this.ai;
-    let target, power, spin = 0;
-    let kind = 'drive';
+    const s = this.shot;
+    const ctx = opts.serve ? { serve: true } : this.contactCtx(s.path, this.gameTime - s.t0, pos);
+    const family = opts.serve ? 'saque' : opts.family || this.aiFamily(ctx);
+    const f = C.SHOTS[family];
+    const nominalSpin = { liftado: 0.7, cortado: -0.7, rulo: 0.8, vibora: -0.9, bandeja: -0.5 }[family] || 0;
+    let tx = rand(-3.8, 3.8);
+    let tz = -side * 6;
     if (opts.serve) {
-      target = { x: -Math.sign(pos.x || 1) * rand(1, 3.8), z: -side * rand(3.5, 6.2) };
-      power = 0.25;
-      spin = rand(-0.3, 0.3);
-    } else if (pos.y > C.SMASH_HEIGHT) {
-      kind = 'smash';
-      power = A.smashPower;
-      const toSide = Math.random() < 0.5;
-      target = { x: toSide ? rand(3, 4.3) * (Math.random() < 0.5 ? -1 : 1) : rand(-3, 3), z: -side * rand(3, 6) };
-    } else if (Math.random() < A.lobChance) {
-      power = 0;
-      spin = rand(-0.3, 0.1);
-      target = { x: rand(-3.5, 3.5), z: -side * rand(7.8, 9) };
-    } else {
-      power = rand(A.powerMin, A.powerMax);
-      spin = rand(-0.7, 0.8);
-      target = { x: rand(-3.8, 3.8), z: -side * rand(5, 8.5) };
+      tx = -Math.sign(pos.x || 1) * rand(1.2, 3.6);
+      tz = -side * 4.5;
+    } else if (family === 'remate' && Math.random() < 0.5) {
+      tx = Math.sign(rand(-1, 1)) * rand(3, 4.5); // buscar la salida por 3
     }
-    const err = randDisk(opts.serve ? A.errBase * 0.4 : A.errBase);
-    target.x += err.x;
-    target.z += err.z;
-    const speed = lerp(C.SHOT_SPEED_MIN, C.SHOT_SPEED_MAX, power) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR);
-    const sol = solveShot(pos, target, speed, spin, 0, 0);
+    const power = opts.serve ? rand(0.35, 0.6) : family === 'remate' ? rand(0.7, 1) : rand(A.powerMin, A.powerMax);
+    const q = opts.serve ? Math.max(A.qMin, 0.75) : rand(A.qMin, A.qMax);
+    const yaw = Math.atan2(tx - pos.x, tz - pos.z);
+    const sh = buildShot({ p: pos, side, yaw, power, family, stroke: { spin: nominalSpin, angle: f.angle }, q });
     hitSound(power);
-    if (kind === 'smash') {
+    if (family === 'remate') {
       this.shake = C.SHAKE_SMASH * 0.5;
       this.fovKick = 0.5;
     }
-    this.doHit(player, pos, sol.v, spin, 0, kind);
+    const serve = opts.serve ? { boxSign: -Math.sign(pos.x || 1) } : null;
+    this.doHit(player, pos, sh.v, sh.spin, sh.side, family, { serve, power, q });
   }
 
   endPoint(winner, reason) {
     if (this.phase === 'pointEnd') return;
     this.phase = 'pointEnd';
     this.layer.innerHTML = '';
+    // Saque: la primera falta da segundo saque
+    if (reason === 'falta' && this.serveTry === 1) {
+      this.serveTry = 2;
+      this.toast('Falta', 'Segundo saque', '#fff');
+      whiffSound();
+      this.after(C.POINT_END_DELAY, () => this.startPoint(true));
+      return;
+    }
+    if (reason === 'falta') reason = 'doble falta';
     const win = winner === 1;
     const m = this.match;
     m.pts[winner]++;
@@ -416,6 +483,7 @@ export class MatchScene {
       vuelve: 'Vuelve al campo',
       muere: 'Bola muerta',
       fallo: win ? 'Fallo rival' : 'Fallaste',
+      'doble falta': 'Doble falta',
     };
     this.toast(win ? '¡PUNTO!' : 'Punto rival', reasons[reason] || reason, win ? '#ffe066' : '#ff8a80');
     pointSound(win);
@@ -453,7 +521,7 @@ export class MatchScene {
     b.addEventListener('click', () => this.app.go(MatchScene, this.params));
   }
 
-  // ---------- pausa táctica ----------
+  // ---------- pausa táctica: flecha de dirección y fuerza ----------
   enterTactical() {
     this.phase = 'tactical';
     this.timeScale = 0;
@@ -461,54 +529,43 @@ export class MatchScene {
     vibrate(15);
     const L = this.layer;
     L.innerHTML = '';
-    this.tacHint = el('div', 'hint', L, '');
-    const bar = el('div', 'power', L);
-    this.powerFill = el('div', 'fill', bar);
-    this.powerLbl = el('div', 'lbl', bar);
-    bar.dataset.ui = 'power';
-    this.powerBar = bar;
+    const c = this.shot.contact;
+    el('div', 'hint', L, c.serve
+      ? 'Saca al cuadro cruzado<small>Arrastra: la flecha marca dirección y fuerza</small>'
+      : 'Arrastra para apuntar<small>La flecha marca dirección y fuerza</small>');
+    this.arrowLbl = el('div', 'arrow-lbl', L);
     const next = el('button', 'btn', L, 'SIGUIENTE ▶');
     next.dataset.ui = 'next';
     Object.assign(next.style, { left: '50%', bottom: 'calc(var(--u) * 8)', transform: 'translateX(-50%)' });
     next.addEventListener('pointerdown', (e) => e.stopPropagation());
     next.addEventListener('click', () => this.enterImpact());
-    this.marker.visible = true;
-    this.updatePower();
-    this.updatePreview();
-  }
-
-  updatePower() {
-    this.powerFill.style.height = `${Math.round(this.power * 100)}%`;
-    this.powerLbl.textContent = `${Math.round(this.power * 100)}%`;
-  }
-
-  shotSpeed(power, spin) {
-    return lerp(C.SHOT_SPEED_MIN, C.SHOT_SPEED_MAX, power) * (1 + this.stats.power * META.STAT_POWER) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR);
-  }
-
-  updatePreview() {
-    const cp = this.shot.contact.pos;
-    this.marker.position.x = this.aim.x;
-    this.marker.position.z = this.aim.z;
-    const sol = solveShot(cp, this.aim, this.shotSpeed(this.power, 0), 0, 0, 0);
-    const path = simulate({ p: cp, v: sol.v }, 3);
-    const out = judge(path, 1);
-    const firstBounce = path.events.find((e) => e.type === 'ground' || e.type === 'wall' || e.type === 'out');
-    const tEnd = firstBounce ? firstBounce.t : path.duration;
-    const m = new THREE.Matrix4();
-    for (let i = 0; i < this.arcN; i++) {
-      const p = sampleAt(path, (tEnd * i) / (this.arcN - 1), this.tmp);
-      m.makeTranslation(p.x, p.y, p.z);
-      this.arc.setMatrixAt(i, m);
+    // Rumbo inicial: recto al campo rival, o al cuadro de saque cruzado
+    const cp = c.pos;
+    if (c.serve) {
+      this.yaw = Math.atan2(c.serve.boxSign * 2.5 - cp.x, -4.5 - cp.z);
+      this.power = 0.5;
+    } else {
+      this.yaw = Math.PI;
+      this.power = 0.6;
     }
-    this.arc.instanceMatrix.needsUpdate = true;
-    this.arc.visible = true;
-    const bad = out.winner === -1 || !sol.reachable;
-    this.tacHint.innerHTML = bad
-      ? 'Toca el campo rival para apuntar<small style="color:#ff8a80">¡Así se va fuera! Baja la potencia o apunta más largo</small>'
-      : 'Toca el campo rival para apuntar<small>y ajusta la potencia</small>';
-    this.arcMat.color.setHex(bad ? 0xff5040 : 0xffffff);
-    this.marker.material.color.setHex(bad ? 0xff5040 : 0xffffff);
+    this.arrow.visible = true;
+    this.updateArrow();
+  }
+
+  updateArrow() {
+    const cp = this.shot.contact.pos;
+    const len = C.ARROW_MIN_LEN + (C.ARROW_MAX_LEN - C.ARROW_MIN_LEN) * this.power;
+    this.arrow.position.set(cp.x, 0.04, cp.z);
+    this.arrow.rotation.y = this.yaw;
+    this.arrowShaft.scale.z = len;
+    this.arrowShaft.position.z = len / 2;
+    this.arrowHead.position.z = len;
+    const col = new THREE.Color(0x4cd964).lerp(new THREE.Color(0xffcc00), Math.min(1, this.power * 1.6));
+    if (this.power > 0.62) col.lerp(new THREE.Color(0xff3b30), (this.power - 0.62) / 0.38);
+    this.arrowMat.color.copy(col);
+    const tip = this.toScreen({ x: cp.x + Math.sin(this.yaw) * (len + 1.2), y: 0, z: cp.z + Math.cos(this.yaw) * (len + 1.2) });
+    Object.assign(this.arrowLbl.style, { left: `${tip.x}px`, top: `${tip.y}px` });
+    this.arrowLbl.textContent = `${Math.round(this.power * 100)}%`;
   }
 
   aimFromPointer(xy) {
@@ -516,53 +573,62 @@ export class MatchScene {
     this.raycaster.setFromCamera(ndc, this.camera);
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return;
-    if (hit.z > 1.5) return; // tocar en nuestro campo no apunta
-    this.aim.x = clamp(hit.x, -4.6, 4.6);
-    this.aim.z = clamp(hit.z, -9.6, -0.8);
-    this.updatePreview();
+    const cp = this.shot.contact.pos;
+    // Rumbo limitado alrededor de "recto hacia el rival"
+    let rel = Math.atan2(hit.x - cp.x, hit.z - cp.z) - Math.PI;
+    rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    this.yaw = Math.PI + clamp(rel, -C.ARROW_MAX_YAW, C.ARROW_MAX_YAW);
+    // Fuerza: distancia en pantalla entre el jugador y el dedo
+    const o = this.toScreen({ x: cp.x, y: 0, z: cp.z });
+    this.power = clamp(Math.hypot(xy.x - o.x, xy.y - o.y) / (C.ARROW_FULL_FRAC * this.app.height), 0, 1);
+    this.updateArrow();
   }
 
   // ---------- fase de impacto ----------
   enterImpact() {
     this.phase = 'impact';
     this.timeScale = C.SLOWMO;
-    this.arc.visible = false;
+    this.arrow.visible = false;
     this.court.sideX.visible = false;
-    const cp = this.shot.contact.pos;
+    const c = this.shot.contact;
+    const cp = c.pos;
     const D = C.SIDE_CAM_DIST;
     const A = C.SIDE_CAM_LOOK_AHEAD;
-    this.blendCamera({ pos: [cp.x + D, cp.y + 1.0, cp.z - A], look: [cp.x, cp.y + 0.3, cp.z - A] }, 0.3);
+    this.blendCamera({ pos: [cp.x + D, cp.y + 0.35, cp.z - A], look: [cp.x, cp.y, cp.z - A] }, 0.3);
+    this.ball.scale.setScalar(C.IMPACT_BALL_SCALE);
     const L = this.layer;
     L.innerHTML = '';
     el('div', 'vignette', L);
-    el('div', 'hint', L, 'Desliza sobre la bola<small>↗ liftado · → plano · ↘ cortado</small>');
+    el('div', 'hint', L, 'Desliza sobre la bola<small>Por el centro: plano · rozando: liftado o cortado</small>');
     this.ghost = el('div', 'ring ghost', L);
     this.ring = el('div', 'ring', L);
     this.approach = el('div', 'ring approach', L);
-    el('div', 'dot', this.ring);
     this.swipeCv = el('canvas', 'swipe', L);
     this.swipeCv.width = this.app.width;
     this.swipeCv.height = this.app.height;
     this.swipePts = null;
     this.hitDone = false;
-    // El personaje prepara el golpe y espera al deslizamiento
-    const kind = cp.y > C.SMASH_HEIGHT ? 'smash' : 'drive';
-    this.team[this.shot.contact.idx].swing(kind, 0.35);
+    // Hacia dónde queda el campo rival en pantalla (la cámara mira desde +x)
+    this.fwd = Math.sign(cp.z || 1);
+    // El personaje prepara el golpe según la altura y espera al deslizamiento
+    const p = this.team[c.idx];
+    const prep = c.serve ? 'saque' : cp.y >= C.SMASH_MIN_H ? 'smash' : cp.y >= C.OVERHEAD_MIN_H ? 'bandeja' : this.animFor('plano', p, cp);
+    p.swing(prep, 0.35);
     vibrate(10);
     whooshSound();
   }
 
-  ringRadius() { return C.HIT_RING_FRAC * this.app.width; }
-
   updateImpactUI() {
-    const r = this.ringRadius();
     const b = this.toScreen(this.ball.position);
-    const g = this.toScreen(this.shot.contact.pos);
+    const top = this.toScreen({ x: this.ball.position.x, y: this.ball.position.y + C.BALL_VISUAL_R * C.IMPACT_BALL_SCALE, z: this.ball.position.z });
+    const r = Math.max(8, Math.abs(b.y - top.y));
     this.ballScreen = b;
+    this.ballR = r;
+    const g = this.toScreen(this.shot.contact.pos);
     const t = this.gameTime - this.shot.t0 - this.shot.contact.t;
     const near = Math.abs(t) < C.TIMING_WINDOW * 0.5;
     Object.assign(this.ring.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${2 * r}px`, height: `${2 * r}px` });
-    this.ring.style.borderColor = near ? '#4cd964' : '#fff';
+    this.ring.style.borderColor = near ? '#4cd964' : '#ffffffaa';
     Object.assign(this.ghost.style, { left: `${g.x}px`, top: `${g.y}px`, width: `${2 * r}px`, height: `${2 * r}px` });
     // Aro de aproximación: se cierra sobre la bola justo en el contacto ideal
     const k = clamp(-t / C.IMPACT_LEAD, 0, 1);
@@ -585,65 +651,51 @@ export class MatchScene {
     }
   }
 
-  checkSwipe() {
+  /** Comprueba el trazo; final = el dedo se ha levantado. */
+  checkSwipe(final = false) {
     const pts = this.swipePts;
     if (!pts || pts.length < 2 || this.hitDone) return;
     const a = pts[0];
     const b = pts[pts.length - 1];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < C.MIN_SWIPE_PX_FRAC * this.app.width) return;
-    // ¿El último tramo cruza el aro de la bola?
-    const r = this.ringRadius();
     const c = this.ballScreen;
-    const p = pts[pts.length - 2];
-    const sx = b.x - p.x, sy = b.y - p.y;
-    const sl2 = sx * sx + sy * sy || 1;
-    const k = clamp(((c.x - p.x) * sx + (c.y - p.y) * sy) / sl2, 0, 1);
-    const dist = Math.hypot(p.x + sx * k - c.x, p.y + sy * k - c.y);
-    // Trazo ya pasado del centro de la bola (o muy cerca)
-    const along = ((c.x - a.x) * dx + (c.y - a.y) * dy) / len;
-    if (dist > r * C.WHIFF_OFFSET || along > len) return;
-    // Desviación: distancia con signo del centro de la bola a la línea del trazo (en radios)
-    const offset = (dx * (c.y - a.y) - dy * (c.x - a.x)) / len / r;
-    this.resolveHit(dx, dy, offset);
-  }
-
-  resolveHit(dx, dy, offset) {
-    if (Math.abs(offset) > C.WHIFF_OFFSET) {
+    const r = this.ballR;
+    // El trazo cuenta cuando llega a la altura de la bola (proyección del centro sobre el trazo)
+    const along = ((c.x - a.x) * (b.x - a.x) + (c.y - a.y) * (b.y - a.y)) / len;
+    if (!final && along > len) return;
+    const st = analyzeStroke(a, b, c, r, this.fwd);
+    if (st.whiff) {
       whiffSound();
       this.toast('¡Aire!', '', '#ddd');
       this.swipePts = null;
       return;
     }
+    this.resolveHit(st);
+  }
+
+  resolveHit(st) {
     this.hitDone = true;
     const contact = this.shot.contact;
     const player = this.team[contact.idx];
     const pos = { x: this.ball.position.x, y: this.ball.position.y, z: this.ball.position.z };
-
-    // Efecto según el ángulo del trazo (arriba = liftado, abajo = cortado)
-    const ang = (Math.atan2(-dy, Math.abs(dx)) * 180) / Math.PI;
-    let spin = 0;
-    if (Math.abs(ang) > C.FLAT_ANGLE_DEG) {
-      spin = Math.sign(ang) * Math.min(1, (Math.abs(ang) - C.FLAT_ANGLE_DEG) / (C.SPIN_FULL_ANGLE_DEG - C.FLAT_ANGLE_DEG)) * C.SPIN_MAX;
-    }
-    // Precisión: timing y centrado
     const tErr = this.gameTime - this.shot.t0 - contact.t;
     const timingQ = clamp(1 - Math.abs(tErr) / C.TIMING_WINDOW, 0, 1);
-    const centerQ = clamp(1 - Math.abs(offset), 0, 1);
-    const q = timingQ * (0.4 + 0.6 * centerQ);
-    const errR = lerp(C.PRECISION_MIN_ERR, C.PRECISION_MAX_ERR, 1 - q) * (1 - this.stats.precision * META.STAT_PRECISION);
-    const e = randDisk(errR);
-    const target = { x: this.aim.x + e.x, z: this.aim.z + e.z };
-    const dev = (-offset * C.SIDE_DEV_MAX_DEG * Math.PI) / 180;
-    const side = offset * C.SIDESPIN_FROM_OFFSET;
-    const kind = pos.y > C.SMASH_HEIGHT ? 'smash' : 'drive';
-    const sol = solveShot(pos, target, this.shotSpeed(this.power, spin), spin, side, dev);
+    const contactQ = st.dist <= 1 ? 1 : 1 - ((st.dist - 1) / (C.WHIFF_OFFSET - 1)) * 0.6;
+    const q = timingQ * contactQ;
+    const ctx = this.contactCtx(this.shot.path, this.gameTime - this.shot.t0, pos, !!contact.serve, contact.bounced);
+    const family = classify(ctx, st);
+    // Pronto = la bola se va cruzada; tarde = paralela
+    const dev = clamp(-tErr / C.TIMING_WINDOW, -1, 1) * C.TIMING_DEV_DEG * DEG;
+    const sh = buildShot({
+      p: pos, side: 1, yaw: this.yaw, power: this.power, family, stroke: st, q, dev,
+      statPower: this.stats.power * META.STAT_POWER, statPrecision: this.stats.precision * META.STAT_PRECISION,
+    });
     this.lastQ = q;
-    player.swingKind = kind;
+    player.swingKind = this.animFor(family, player, pos);
     player.release();
-    this.doHit(player, pos, sol.v, spin, side, kind);
-    this.lastHit = { q, tErr, offset, spin, ang };
+    this.doHit(player, pos, sh.v, sh.spin, sh.side, family, { serve: contact.serve, power: this.power, q });
+    this.lastHit = { q, tErr, family, spin: sh.spin, angle: st.angle, dist: st.dist, contact: st.contact };
 
     // Juice
     hitSound(this.power);
@@ -652,10 +704,9 @@ export class MatchScene {
     this.burst(pos, q > 0.85 ? 0xffe066 : 0xffffff, q > 0.85 ? 24 : 12, 4);
     this.shake = C.SHAKE_HIT * (0.5 + this.power);
     vibrate(q > 0.85 ? C.VIBRATE_PERFECT : C.VIBRATE_HIT);
-    if (kind === 'smash') this.smashJuice(pos);
+    if (family === 'remate') this.smashJuice(pos);
     const label = q > 0.85 ? '¡PERFECTO!' : q > 0.55 ? '¡Bien!' : tErr < 0 ? 'Pronto' : 'Tarde';
-    const spinLbl = spin > 0.15 ? 'Liftado' : spin < -0.15 ? 'Cortado' : 'Plano';
-    this.toast(label, spinLbl + (kind === 'smash' ? ' · Remate' : ''), q > 0.85 ? '#ffe066' : '#fff');
+    this.toast(label, FAMILY_LABEL[family], q > 0.85 ? '#ffe066' : '#fff');
     this.exitImpact();
   }
 
@@ -670,7 +721,7 @@ export class MatchScene {
   exitImpact() {
     this.layer.innerHTML = '';
     this.court.sideX.visible = true;
-    this.marker.visible = false;
+    this.ball.scale.setScalar(1);
     this.phase = 'live';
     this.timeScale = C.SLOWMO;
     this.rampTime = true;
@@ -681,25 +732,18 @@ export class MatchScene {
     if (e.target?.closest?.('button')) return;
     const xy = this.localXY(e);
     if (this.phase === 'tactical') {
-      if (type === 'down') {
-        this.dragging = e.target?.closest?.('[data-ui="power"]') ? 'power' : 'aim';
-      }
-      if (type === 'up') { this.dragging = null; return; }
-      if (!this.dragging) return;
-      if (this.dragging === 'power') {
-        const r = this.powerBar.getBoundingClientRect();
-        this.power = clamp(1 - (e.clientY - r.top) / r.height, 0, 1);
-        this.updatePower();
-        this.updatePreview();
-      } else {
-        this.aimFromPointer(xy);
-      }
+      if (type === 'down') this.dragging = true;
+      if (type === 'up') { this.dragging = false; return; }
+      if (this.dragging) this.aimFromPointer(xy);
     } else if (this.phase === 'impact') {
       if (type === 'down') this.swipePts = [xy];
       else if (type === 'move' && this.swipePts) {
         this.swipePts.push(xy);
         this.checkSwipe();
-      } else if (type === 'up') this.swipePts = null;
+      } else if (type === 'up') {
+        this.checkSwipe(true);
+        this.swipePts = null;
+      }
     }
   }
 
@@ -716,6 +760,7 @@ export class MatchScene {
       if (this.timeScale >= 1) this.rampTime = false;
     }
     let gdt = dt * this.timeScale;
+    if (this.debugFreeze && this.phase === 'impact') gdt = 0; // solo pruebas automáticas
     if (this.hitStop > 0) {
       this.hitStop -= dt;
       gdt = 0;
@@ -767,13 +812,13 @@ export class MatchScene {
         }
       } else {
         const p = this.rivals[c.idx];
-        if (!c.swung && t >= c.t - p.swingDur * 0.45) {
+        if (!c.swung && t >= c.t - swingDur(c.anim) * SWING_HIT_U) {
           c.swung = true;
-          p.swing(c.pos.y > C.SMASH_HEIGHT ? 'smash' : 'drive');
+          p.swing(c.anim);
         }
         if (t >= c.t) {
           c.done = true;
-          if (!c.miss) this.aiShot(p, { ...c.pos });
+          if (!c.miss) this.aiShot(p, { ...c.pos }, { family: c.family });
           else { whiffSound(); this.toast('¡Falla!', '', '#ffe066'); }
         }
       }
@@ -789,7 +834,9 @@ export class MatchScene {
     const h = this.ball.position.y;
     this.blob.scale.setScalar(1 + h * 0.3);
     this.blob.material.opacity = clamp(0.4 - h * 0.05, 0.1, 0.4);
-    const gap = s.kind === 'smash' ? 4 : 2; // estela más larga en remates
+    const gap = s.kind === 'remate' ? 4 : 2; // estela más larga en remates
+    // La bola gira según su efecto (se ve la costura)
+    this.ball.rotation.x -= this.ballSpin * 0.4 * Math.sign(-s.hitter || 1);
     this.trailPos.unshift(this.ball.position.clone());
     if (this.trailPos.length > this.trail.length * 4) this.trailPos.pop();
     this.trail.forEach((m, i) => {
@@ -811,10 +858,7 @@ export class MatchScene {
       p.m.material.opacity = clamp(p.life * 2, 0, 1);
       if (p.life <= 0) p.m.visible = false;
     }
-    if (this.marker.visible) {
-      const s = 1 + Math.sin(performance.now() / 150) * 0.08;
-      this.marker.scale.set(s, s, s);
-    }
+
   }
 
   updateCamera(dt) {

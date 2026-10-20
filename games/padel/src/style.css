@@ -171,3 +171,9 @@ html, body {
 .logo { font-weight: 900; font-size: calc(var(--u) * 15); text-align: center; line-height: .95; text-shadow: 0 calc(var(--u) * 1.2) 0 #0006; }
 .logo span { color: #ffcc33; }
 .title-screen .club { font-weight: 700; opacity: .9; }
+
+.arrow-lbl {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: none;
+  font-weight: 900; font-size: calc(var(--u) * 6); color: #fff;
+  text-shadow: 0 calc(var(--u) * .6) 0 #0009;
+}

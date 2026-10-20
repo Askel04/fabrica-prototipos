@@ -14,3 +14,4 @@ Inicio de la prueba: 2026-10-20 10:39 UTC
 
 Fin de la prueba: 2026-10-20 11:22 UTC — total 0:43 de reloj del contenedor (horas sacadas de los commits).
 Nota: el hito 4 se escribió en parte (estado/guardado y pantallas) mientras corría la prueba automática del hito 3, por eso dura poco.
+| **Iteración 2** — F1 golpe nuevo, efectos y saque | 12:38 | 12:54 | | Flecha de dirección y %, bola grande, análisis del trazo (punto de contacto + abanico de efecto), 10 familias de golpe, cristal con efecto (víbora muerta, rulo sube), x3/x4 calibrados, saque reglamentario con segundo saque. Playwright: plano/liftado/cortado/globo/saque con toque real, 0 errores |

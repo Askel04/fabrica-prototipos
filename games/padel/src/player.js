@@ -14,6 +14,24 @@ function part(w, h, d, color, x = 0, y = 0, z = 0) {
   return m;
 }
 
+// Poses clave de cada golpe. ax/az: brazo de la pala (x adelante-arriba negativo, z negativo hacia fuera),
+// by: giro del cuerpo, lx: brazo libre, jump: salto. El contacto ocurre en u = 0.5.
+const IDLE = { ax: -0.5, az: -0.15, by: 0, lx: -0.3, jump: 0 };
+const POSES = {
+  drive: { prep: { ax: -0.3, az: -1.3, by: 0.9 }, hit: { ax: -1.0, az: -1.4, by: 0 }, follow: { ax: -2.3, az: 0.4, by: -0.8 } },
+  reves: { prep: { ax: -0.6, az: 1.4, by: -0.9 }, hit: { ax: -1.2, az: 0.9, by: 0 }, follow: { ax: -2.0, az: -0.8, by: 0.7 } },
+  cortado: { prep: { ax: -2.0, az: -1.0, by: 0.8 }, hit: { ax: -1.1, az: -1.3, by: 0.1 }, follow: { ax: -0.6, az: -0.2, by: -0.5 } },
+  globo: { prep: { ax: 0.4, az: -0.7, by: 0.5 }, hit: { ax: -0.9, az: -0.8, by: 0 }, follow: { ax: -2.9, az: -0.3, by: -0.3 } },
+  volea: { dur: 0.25, prep: { ax: -1.3, az: -1.0, by: 0.4 }, hit: { ax: -1.5, az: -0.9, by: 0 }, follow: { ax: -1.5, az: -0.5, by: -0.2 } },
+  bandeja: { dur: 0.42, prep: { ax: -2.6, az: -0.9, by: 1.0, lx: -1.6 }, hit: { ax: -2.3, az: -1.4, by: 0.2, lx: -0.8 }, follow: { ax: -1.2, az: -1.5, by: -0.5, lx: -0.3 } },
+  vibora: { dur: 0.42, prep: { ax: -2.8, az: -1.2, by: 1.2, lx: -1.8 }, hit: { ax: -2.2, az: -1.7, by: 0, lx: -0.6 }, follow: { ax: -0.7, az: 0.6, by: -1.0, lx: -0.2 } },
+  rulo: { dur: 0.42, prep: { ax: -1.6, az: -0.6, by: 0.7, lx: -1.6 }, hit: { ax: -2.8, az: -0.6, by: 0.1, lx: -1.0 }, follow: { ax: -2.2, az: 0.8, by: -0.9 } },
+  smash: { dur: 0.5, prep: { ax: -3.0, az: -0.5, by: 0.7, jump: 0.3, lx: -2.9 }, hit: { ax: -2.9, az: -0.1, by: 0.1, jump: 0.45, lx: -1.5 }, follow: { ax: -0.3, az: 0.3, by: -0.6, lx: -0.3 } },
+  saque: { dur: 0.45, prep: { ax: 0.6, az: -0.6, by: 0.6, lx: -1.0 }, hit: { ax: -0.5, az: -0.5, by: 0.1, lx: -0.4 }, follow: { ax: -1.8, az: 0.2, by: -0.4 } },
+};
+export const SWING_HIT_U = 0.5;
+export const swingDur = (kind) => (POSES[kind] || POSES.drive).dur || 0.36;
+
 export class Player {
   constructor({ shirt, shorts, hair, skin = C.COLORS.skin, side, hairStyle = 0 }) {
     this.side = side; // 1 jugador, -1 rival
@@ -90,8 +108,8 @@ export class Player {
   get pos() { return this.root.position; }
 
   idlePose() {
-    this.armR.rotation.set(-0.5, 0, -0.15);
-    this.armL.rotation.set(-0.3, 0, 0.15);
+    this.armR.rotation.set(IDLE.ax, 0, IDLE.az);
+    this.armL.rotation.set(IDLE.lx, 0, 0.15);
     this.body.rotation.y = 0;
   }
 
@@ -136,29 +154,23 @@ export class Player {
       return;
     }
 
-    // Golpe
+    // Golpe: interpolación entre poses clave (reposo → preparación → contacto → terminación → reposo)
     if (this.swingT >= 0) {
-      this.swingT += dt / this.swingDur;
+      const P = POSES[this.swingKind] || POSES.drive;
+      this.swingT += dt / (P.dur || 0.36);
       if (this.hold != null) this.swingT = Math.min(this.swingT, this.hold);
       const u = Math.min(1, this.swingT);
-      const smash = this.swingKind === 'smash';
-      // 0-0.35 preparación, 0.35-0.6 golpe, 0.6-1 terminación
-      let ax, by;
-      if (u < 0.35) {
-        const k = u / 0.35;
-        ax = smash ? -0.5 - 2.6 * k : -0.5 + 1.3 * k;
-        by = 0.7 * k;
-      } else if (u < 0.6) {
-        const k = (u - 0.35) / 0.25;
-        ax = smash ? -3.1 + 2.6 * k : 0.8 - 2.8 * k;
-        by = 0.7 - 1.4 * k;
-      } else {
-        const k = (u - 0.6) / 0.4;
-        ax = smash ? -0.5 : -2.0 + 1.5 * k;
-        by = -0.7 + 0.7 * k;
-      }
-      this.armR.rotation.set(ax, 0, -0.15);
-      this.body.rotation.y = by;
+      let a, b, k;
+      if (u < 0.35) [a, b, k] = [IDLE, P.prep, u / 0.35];
+      else if (u < 0.5) [a, b, k] = [P.prep, P.hit, (u - 0.35) / 0.15];
+      else if (u < 0.75) [a, b, k] = [P.hit, P.follow, (u - 0.5) / 0.25];
+      else [a, b, k] = [P.follow, IDLE, (u - 0.75) / 0.25];
+      const e = k * k * (3 - 2 * k);
+      const g = (key) => (a[key] ?? IDLE[key]) + ((b[key] ?? IDLE[key]) - (a[key] ?? IDLE[key])) * e;
+      this.armR.rotation.set(g('ax'), 0, g('az'));
+      this.armL.rotation.set(g('lx'), 0, 0.15);
+      this.body.rotation.y = g('by');
+      this.body.position.y = Math.max(this.body.position.y, g('jump'));
       if (u >= 1) {
         this.swingT = -1;
         this.idlePose();

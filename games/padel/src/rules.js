@@ -9,8 +9,9 @@ import { sideOf, sampleAt } from './physics.js';
  * {t, winner, reason, legalBounceT, events}
  * hitter: 1 (jugador) o -1 (rival)
  */
-export function judge(path, hitter) {
+export function judge(path, hitter, opts = {}) {
   const recv = -hitter;
+  const serve = opts.serve; // {boxSign}: signo de x del cuadro de saque cruzado
   let crossed = false;
   let bounces = 0;
   let legalBounceT = null;
@@ -25,19 +26,25 @@ export function judge(path, hitter) {
     }
     if (e.type === 'net') continue;
     if (e.type === 'ground') {
-      if (!crossed || side !== recv) return end(e.t, recv, 'red');
+      if (!crossed || side !== recv) return end(e.t, recv, serve ? 'falta' : 'red');
       bounces++;
+      // Saque: el primer bote dentro del cuadro de saque cruzado
+      if (serve && bounces === 1 && (Math.abs(e.z) > C.SERVICE_LINE || Math.sign(e.x || 1e-9) !== serve.boxSign)) {
+        return end(e.t, recv, 'falta');
+      }
       if (bounces === 1) legalBounceT = e.t;
       if (bounces === 2) return end(e.t, hitter, 'doble bote');
       continue;
     }
     if (e.type === 'wall') {
-      if (!crossed || side !== recv) return end(e.t, recv, 'pared propia');
-      if (bounces === 0) return end(e.t, recv, 'cristal directo');
+      if (!crossed || side !== recv) return end(e.t, recv, serve ? 'falta' : 'pared propia');
+      if (bounces === 0) return end(e.t, recv, serve ? 'falta' : 'cristal directo');
+      // Saque: tocar la malla antes del segundo bote es falta (el cristal sí vale)
+      if (serve && e.wall === 'mesh') return end(e.t, recv, 'falta');
       continue;
     }
     if (e.type === 'out') {
-      if (bounces === 0) return end(e.t, recv, 'fuera');
+      if (bounces === 0 || serve) return end(e.t, recv, serve ? 'falta' : 'fuera');
       return end(e.t, hitter, e.wall === 'side' ? 'por 3' : 'por 4');
     }
     if (e.type === 'rest') return end(e.t, bounces > 0 ? hitter : recv, 'muere');
@@ -49,7 +56,7 @@ export function judge(path, hitter) {
  * Busca el primer momento en que algún jugador del equipo receptor puede golpear.
  * players: [{x, z}] posiciones actuales. Devuelve {t, idx, pos, bounced} o null.
  */
-export function findContact(path, outcome, recvSide, players, speed = C.PLAYER_SPEED, reaction = C.REACTION) {
+export function findContact(path, outcome, recvSide, players, speed = C.PLAYER_SPEED, reaction = C.REACTION, opts = {}) {
   if (outcome.winner === recvSide) return null; // va fuera: no se toca
   const tEnd = outcome.t - 0.02;
   const p = { x: 0, y: 0, z: 0 };
@@ -69,6 +76,7 @@ export function findContact(path, outcome, recvSide, players, speed = C.PLAYER_S
     if (sideOf(p.z) !== recvSide || p.y < C.MIN_HIT_H || p.y > C.MAX_HIT_H) continue;
     if (Math.abs(p.z) < 1.2) continue; // demasiado pegado a la red
     const bounced = bounceT !== null && t > bounceT;
+    if (opts.mustBounce && !bounced) continue; // el resto del saque no se puede volear
     for (let i = 0; i < players.length; i++) {
       const d = Math.hypot(players[i].x - p.x, players[i].z - p.z) - C.REACH;
       if (d <= speed * Math.max(0, t - reaction)) {

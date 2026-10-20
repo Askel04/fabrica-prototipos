@@ -49,6 +49,12 @@ export const CONFIG = {
   SPIN_BOUNCE_E: 0.14, // liftado: bote más alto; cortado: más bajo
   SPIN_BOUNCE_H: 0.2, // liftado: sale más rápido; cortado: frena
   SPIN_DECAY_BOUNCE: 0.45,
+  HARD_BOUNCE_VY: 9, // m/s de caída a partir de los que el bote se aviva
+  HARD_BOUNCE_RANGE: 8,
+  HARD_BOUNCE_E: 0.12,
+  SPIN_DECAY_BOUNCE_BACK: 0.75, // el cortado conserva más efecto tras botar (llega vivo al cristal)
+  SPIN_GLASS_E: 0.25, // restitución extra en el cristal por efecto (cortado sale muerto)
+  SPIN_GLASS_LIFT: 0.35, // velocidad vertical que da el efecto al salir del cristal (liftado sube)
   GLASS_E: 0.7,
   GLASS_FRICTION: 0.85,
   MESH_E: 0.3,
@@ -56,29 +62,55 @@ export const CONFIG = {
   NET_E: 0.15,
 
   // Golpe
-  SHOT_SPEED_MIN: 10, // m/s con potencia 0
-  SHOT_SPEED_MAX: 26, // m/s con potencia 1
-  SPIN_MAX: 1, // spin normalizado [-1, 1]
   SPIN_SPEED_FACTOR: 0.12, // el efecto resta algo de velocidad
-  FLAT_ANGLE_DEG: 18, // trazo con ángulo menor que esto = plano
-  SPIN_FULL_ANGLE_DEG: 60, // a este ángulo el efecto es máximo
-  SIDE_DEV_MAX_DEG: 9, // desvío lateral por impacto descentrado
-  SIDESPIN_FROM_OFFSET: 0.5,
-  PRECISION_MIN_ERR: 0.25, // error mínimo (m) sobre la zona objetivo
-  PRECISION_MAX_ERR: 3.2, // error con el peor golpe
-  NET_CLEARANCE: 0.08,
-  SMASH_HEIGHT: 2.1, // por encima de esto el golpe es remate
+  NET_CLEARANCE: 0.25, // margen sobre la red con el que el solver busca la trayectoria ideal
+
+  // Familias de golpe. speed: rango m/s que recorre la flecha (0-100 %); depth: m desde la red donde debe botar;
+  // angle: ángulo nominal del trazo (grados, + hacia arriba); angleGain: grados de elevación por grado de desvío del gesto.
+  SHOTS: {
+    plano: { speed: [12, 25], depth: 7.4, depthPower: 1, branch: 'low', angle: 5, angleGain: 0.1, spinScale: 0.6, anim: 'drive' },
+    liftado: { speed: [11, 25], depth: 6.6, depthPower: 1, branch: 'low', angle: 30, angleGain: 0.08, spinScale: 1, spinMin: 0.35, anim: 'drive' },
+    cortado: { speed: [10, 21], depth: 8.2, depthPower: 0.8, branch: 'low', angle: -25, angleGain: 0.08, spinScale: 1, spinMin: -0.35, anim: 'cortado' },
+    globo: { speed: [9, 16], depth: 8.6, depthPower: 0.8, branch: 'high', angle: 50, angleGain: 0.12, spinScale: 0.5, anim: 'globo' },
+    volea: { speed: [9, 20], depth: 6.2, depthPower: 1.2, branch: 'low', angle: 0, angleGain: 0.1, spinScale: 0.5, anim: 'volea' },
+    bandeja: { speed: [12, 20], depth: 8, depthPower: 0.8, branch: 'low', angle: -15, angleGain: 0.08, spinScale: 0.8, spinMin: -0.3, anim: 'bandeja' },
+    vibora: { speed: [14, 24], depth: 8.5, depthPower: 0.6, branch: 'low', angle: -35, angleGain: 0.08, spinScale: 1, spinMin: -0.6, sideSpin: 0.5, anim: 'vibora' },
+    rulo: { speed: [14, 25], depth: 7.2, depthPower: 0.8, branch: 'low', angle: 20, angleGain: 0.08, spinScale: 1, spinMin: 0.5, anim: 'rulo' },
+    remate: { speed: [18, 32], depth: [5.5, 1.6], branch: 'low', angle: -40, angleGain: 0.06, spinScale: 0.4, anim: 'smash' },
+    saque: { speed: [8, 14], depth: 5, depthPower: 2.4, branch: 'low', angle: 10, angleGain: 0.08, spinScale: 0.7, anim: 'saque' },
+  },
+  SMASH_MIN_H: 2.25, // por encima de la cabeza
+  SMASH_MAX_DNET: 7, // y a esta distancia máxima de la red
+  OVERHEAD_MIN_H: 1.55, // hombro/cabeza: bandeja, víbora o rulo si la bola llega bombeada
+  LOBBED_VY: 3, // m/s de caída para considerar la bola bombeada
+  VOLLEY_MIN_H: 1.0,
+  VOLLEY_FAST: 13, // m/s
+  VOLLEY_NET_D: 4,
+  LOB_ANGLE: 32, // trazo más empinado que esto desde abajo = globo
+  STROKE_SPIN_CURVE: 0.8,
+  GESTURE_MAX_DEG: 7,
+  ELEV_ERR_DEG: 7,
+  YAW_ERR_DEG: 9,
+  SPEED_ERR: 0.15,
+  TIMING_DEV_DEG: 8, // desvío lateral por golpear pronto o tarde
+  RED_BEAM_POWER: 0.85, // remate con haz rojo
+  RED_BEAM_Q: 0.6,
 
   // Impacto (cámara lenta)
   SLOWMO: 0.12, // factor de tiempo durante el impacto
   IMPACT_LEAD: 0.32, // s de juego antes del contacto en que empieza la fase de impacto
   TIMING_WINDOW: 0.16, // s de juego: fuera de esto el timing es 0
   MISS_AFTER: 0.2, // s de juego tras el contacto ideal: si no deslizas, fallas
-  HIT_RING_FRAC: 0.13, // radio del aro de golpe en fracción del ancho de pantalla
   WHIFF_OFFSET: 1.35, // trazo más lejos que esto (en radios) no toca la bola
   MIN_SWIPE_PX_FRAC: 0.06, // longitud mínima del trazo (fracción del ancho)
-  SIDE_CAM_DIST: 7,
-  SIDE_CAM_LOOK_AHEAD: 1.0, // m hacia el rival que se desplaza el centro de la vista
+  SIDE_CAM_DIST: 4.5,
+  IMPACT_BALL_SCALE: 6, // la bola se ve mucho más grande durante el impacto
+  // Flecha de dirección y fuerza
+  ARROW_MIN_LEN: 1.2, // m con fuerza 0
+  ARROW_MAX_LEN: 6, // m con fuerza 100 %
+  ARROW_MAX_YAW: 0.75, // rad a cada lado de "recto"
+  ARROW_FULL_FRAC: 0.42, // arrastre (fracción del alto de pantalla) para el 100 %
+  SIDE_CAM_LOOK_AHEAD: 0.55, // m hacia el rival que se desplaza el centro de la vista
 
   // Jugadores
   PLAYER_SPEED: 5.2, // m/s
@@ -98,15 +130,17 @@ export const CONFIG = {
     missPerRally: 0.03, // extra por cada golpe del intercambio (cansancio)
     fastBall: 20, // m/s
     powerMin: 0.35,
-    powerMax: 0.75,
-    smashPower: 0.95,
+    powerMax: 0.8,
+    smashChance: 0.7, // con bola alta cerca de la red, probabilidad de rematar (si no, bandeja/víbora)
     lobChance: 0.15,
+    qMin: 0.55, // calidad de ejecución de la IA
+    qMax: 0.9,
   },
 
   // Cámaras
   CAM_FOV: 50,
   CAM_MAIN: { pos: [0, 10, 17], look: [0, 0, -0.5] },
-  CAM_TACTICAL: { pos: [0, 12, 15], look: [0, 0, -3] },
+  CAM_TACTICAL: { pos: [0, 14, 17.5], look: [0, 0, -1.2] },
   CAM_BLEND: 0.45, // s reales para volver a la cámara principal
 
   // Partido

@@ -11,6 +11,19 @@ Cuando la bola rival llega a tu alcance el juego se **congela**:
    Donde el trazo cruza la bola = punto de impacto; descentrado → desvío lateral. Mal timing/punto → más error sobre la zona.
 3. Física: gravedad, Magnus simplificado, rebotes en suelo, cristal y red. Se reanuda a velocidad normal.
 
+## Golpeo (iteración 2)
+- **Pausa táctica:** arrastras y sale una flecha con el % de fuerza que solo marca la dirección de salida (no se ve dónde bota).
+- **Impacto:** bola grande en cámara lenta. Del trazo salen el punto de contacto (perpendicular del centro a la línea del trazo) y el efecto continuo `spin = −(p × u)/(r|u|)`: por el centro = plano; rozando arriba o subiendo por detrás = liftado; por debajo o bajando por detrás = cortado.
+- **Familias** (altura de contacto, bote, bola bombeada, efecto): plano, liftado, cortado, globo, volea, bandeja, víbora, rulo, remate, saque. Cada una con su rango de velocidad, profundidad nominal y animación. La elevación es la ideal de la familia + desvío del gesto + error por timing.
+- **Cristal:** el cortado/víbora sale muerto y bajo; el liftado/rulo sube tras la pared.
+- **Saque:** bote en el cuadro cruzado; tocar la malla antes del segundo bote es falta; segundo saque.
+
+### Remate por 3 / por 4 (calibrado con tests/phys-sweep.mjs)
+| Salida | Condiciones aproximadas |
+|---|---|
+| **x4 (fondo)** | Remate plano desde ≤2,5 m de la red, ≥85 % de fuerza (≥27 m/s), bote a ≤2,5 m de la red y por el centro (±25°) |
+| **x3 (lateral)** | Remate desde ≤3,5 m de la red, ≥75 % de fuerza, bote a ≤1,5 m de la red y cruzado ≥30° hacia el lateral |
+
 ## Giro
 Cada golpe es una mini-decisión táctica + un gesto de habilidad: apuntar al rebote en el cristal y el **remate por 3** (sale por el lateral = punto directo) como clímax.
 

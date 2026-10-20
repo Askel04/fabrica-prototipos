@@ -34,12 +34,16 @@ function accel(v, spin, side, out) {
   }
 }
 
-function wallBounce(b, axis, e, f) {
-  // axis: 'x' o 'z' (normal del muro)
+function wallBounce(b, axis, e, f, glass) {
+  // axis: 'x' o 'z' (normal del muro). En el cristal el efecto cambia la salida:
+  // cortado (spin < 0) sale muerto y hacia abajo; liftado (spin > 0) sale vivo y sube.
   const other = axis === 'x' ? 'z' : 'x';
-  b.v[axis] = -b.v[axis] * e;
+  const vn = Math.abs(b.v[axis]);
+  const s = glass ? b.spin : 0;
+  const ee = Math.min(0.95, Math.max(0.2, e + C.SPIN_GLASS_E * s));
+  b.v[axis] = -b.v[axis] * ee;
   b.v[other] *= f;
-  b.v.y *= f;
+  b.v.y = b.v.y * f + C.SPIN_GLASS_LIFT * s * vn;
   b.spin *= 0.6;
 }
 
@@ -87,11 +91,13 @@ export function simulate(start, maxT = C.SIM_MAX_T) {
     if (b.p.y < C.BALL_R && b.v.y < 0) {
       b.p.y = C.BALL_R;
       ev('ground');
-      const e = Math.max(0.2, C.GROUND_E + C.SPIN_BOUNCE_E * b.spin);
+      // Bote vivo en impactos muy verticales y fuertes (remates): permite sacar la bola por 3 o por 4
+      const hard = Math.min(1, Math.max(0, (-b.v.y - C.HARD_BOUNCE_VY) / C.HARD_BOUNCE_RANGE));
+      const e = Math.max(0.2, C.GROUND_E + C.SPIN_BOUNCE_E * b.spin + C.HARD_BOUNCE_E * hard);
       const f = Math.max(0.3, C.GROUND_FRICTION + C.SPIN_BOUNCE_H * b.spin);
       b.v.y = -b.v.y * e;
       b.v.x *= f; b.v.z *= f;
-      b.spin *= C.SPIN_DECAY_BOUNCE;
+      b.spin *= b.spin < 0 ? C.SPIN_DECAY_BOUNCE_BACK : C.SPIN_DECAY_BOUNCE;
       b.side *= C.SPIN_DECAY_BOUNCE;
       if (b.v.y < 0.6) {
         ev('rest');
@@ -103,7 +109,7 @@ export function simulate(start, maxT = C.SIM_MAX_T) {
     if (Math.abs(b.p.z) + C.BALL_R > HALF_L && b.p.z * b.v.z > 0) {
       if (b.p.y < C.BACK_WALL_H) {
         b.p.z = Math.sign(b.p.z) * (HALF_L - C.BALL_R);
-        wallBounce(b, 'z', C.GLASS_E, C.GLASS_FRICTION);
+        wallBounce(b, 'z', C.GLASS_E, C.GLASS_FRICTION, true);
         ev('wall', { wall: 'back' });
       } else if (Math.abs(b.p.z) > HALF_L + 0.3) {
         ev('out', { wall: 'back' });
@@ -117,7 +123,7 @@ export function simulate(start, maxT = C.SIM_MAX_T) {
       const h = glass ? C.SIDE_GLASS_H : C.SIDE_MESH_H;
       if (b.p.y < h) {
         b.p.x = Math.sign(b.p.x) * (HALF_W - C.BALL_R);
-        if (glass) wallBounce(b, 'x', C.GLASS_E, C.GLASS_FRICTION);
+        if (glass) wallBounce(b, 'x', C.GLASS_E, C.GLASS_FRICTION, true);
         else wallBounce(b, 'x', C.MESH_E, C.MESH_FRICTION);
         ev('wall', { wall: glass ? 'side' : 'mesh' });
       } else if (Math.abs(b.p.x) > HALF_W + 0.3) {
@@ -172,7 +178,7 @@ function flight(p, v, spin, side) {
  * Devuelve {v, speed, angle, reachable}.
  * speed: velocidad deseada (se sube si no llega), spin/side: efecto, devRad: desvío lateral.
  */
-export function solveShot(p, target, speed, spin = 0, side = 0, devRad = 0) {
+export function solveShot(p, target, speed, spin = 0, side = 0, devRad = 0, branch = 'low') {
   const dx = target.x - p.x;
   const dz = target.z - p.z;
   const D = Math.hypot(dx, dz);
@@ -187,6 +193,24 @@ export function solveShot(p, target, speed, spin = 0, side = 0, devRad = 0) {
     return { v, L, cleared: f.cleared };
   };
 
+  if (branch === 'high') {
+    // Globo: el ángulo alto (bajando desde 75°) que llega a la distancia pedida
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const sp = speed * (1 + attempt * 0.12);
+      for (let deg = 75; deg >= 30; deg -= 1) {
+        const r = tryAngle(deg, sp);
+        if (r.cleared && r.L >= D) {
+          let lo = deg, hi = deg + 1, res = r;
+          for (let i = 0; i < 8; i++) {
+            const mid = (lo + hi) / 2;
+            const m = tryAngle(mid, sp);
+            if (m.cleared && m.L >= D) { lo = mid; res = m; } else hi = mid;
+          }
+          return { v: res.v, speed: sp, angle: lo, reachable: Math.abs(res.L - D) < 0.6 };
+        }
+      }
+    }
+  }
   for (let attempt = 0; attempt < 8; attempt++) {
     const sp = speed * (1 + attempt * 0.12);
     let prev = null;
@@ -213,4 +237,13 @@ export function solveShot(p, target, speed, spin = 0, side = 0, devRad = 0) {
   }
   const r = tryAngle(35, speed * 1.8);
   return { v: r.v, speed: speed * 1.8, angle: 35, reachable: false };
+}
+
+/** Velocidad a partir de rumbo (rad, 0 = +z), elevación (rad) y módulo. */
+export function launch(yaw, elev, speed) {
+  return {
+    x: Math.sin(yaw) * Math.cos(elev) * speed,
+    y: Math.sin(elev) * speed,
+    z: Math.cos(yaw) * Math.cos(elev) * speed,
+  };
 }
