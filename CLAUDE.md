@@ -22,6 +22,7 @@ Prototipos jugables en móvil lo más rápido posible. Si no divierte, se descar
 - Niveles generados por código cuando sea posible, con solver/validador si es puzle
 - Juice en cuanto la mecánica funcione: tweens, partículas, vibración (navigator.vibrate), sonido
 - Commit en git tras cada paso que funcione
+- Tras cada cambio jugable, antes del commit: abrir http://localhost:5173 con Playwright, hacer captura, probar el toque y revisar la consola (0 errores)
 
 ## Arte (solo fases posteriores)
 - Prototipo: formas geométricas y paleta del GDD
@@ -36,3 +37,4 @@ Prototipos jugables en móvil lo más rápido posible. Si no divierte, se descar
 ## Herramientas instaladas
 - Skills oficiales de Phaser 4 (`phaserjs/phaser`) en `.claude/skills/`: tienen prioridad ante cualquier solapamiento.
 - awesome-gamedev-agent-skills, plugins `router` y `web-engines` (proyecto): sus `phaser-core`/`phaser-arcade-physics` ya apuntan a Phaser 4.2; si contradicen a las oficiales, mandan las oficiales.
+- MCP de Playwright (`.mcp.json`, config en `.claude/playwright-mcp.json`): Chrome en móvil retrato 390x844 con táctil, para probar http://localhost:5173.
