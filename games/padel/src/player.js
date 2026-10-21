@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { CONFIG as C } from './config.js';
 
+const A = C.ANIM;
+
 const mats = new Map();
 const mat = (color) => {
   if (!mats.has(color)) mats.set(color, new THREE.MeshLambertMaterial({ color }));
@@ -18,11 +20,11 @@ function part(w, h, d, color, x = 0, y = 0, z = 0) {
 // by: giro del cuerpo, lx: brazo libre, jump: salto. El contacto ocurre en u = 0.5.
 const IDLE = { ax: -0.5, az: -0.15, by: 0, lx: -0.3, jump: 0 };
 const POSES = {
-  drive: { prep: { ax: -0.3, az: -1.3, by: 0.9 }, hit: { ax: -1.0, az: -1.4, by: 0 }, follow: { ax: -2.3, az: 0.4, by: -0.8 } },
-  reves: { prep: { ax: -0.6, az: 1.4, by: -0.9 }, hit: { ax: -1.2, az: 0.9, by: 0 }, follow: { ax: -2.0, az: -0.8, by: 0.7 } },
-  cortado: { prep: { ax: -2.0, az: -1.0, by: 0.8 }, hit: { ax: -1.1, az: -1.3, by: 0.1 }, follow: { ax: -0.6, az: -0.2, by: -0.5 } },
-  globo: { prep: { ax: 0.4, az: -0.7, by: 0.5 }, hit: { ax: -0.9, az: -0.8, by: 0 }, follow: { ax: -2.9, az: -0.3, by: -0.3 } },
-  volea: { dur: 0.25, prep: { ax: -1.3, az: -1.0, by: 0.4 }, hit: { ax: -1.5, az: -0.9, by: 0 }, follow: { ax: -1.5, az: -0.5, by: -0.2 } },
+  drive: { prep: { ax: -0.3, az: -1.3, by: 1.35, lx: -1.3 }, hit: { ax: -1.0, az: -1.4, by: 0 }, follow: { ax: -2.3, az: 0.4, by: -0.8 } },
+  reves: { prep: { ax: -0.6, az: 1.4, by: -1.35, lx: -0.6 }, hit: { ax: -1.2, az: 0.9, by: 0 }, follow: { ax: -2.0, az: -0.8, by: 0.7 } },
+  cortado: { prep: { ax: -2.0, az: -1.0, by: 1.25, lx: -1.2 }, hit: { ax: -1.1, az: -1.3, by: 0.1 }, follow: { ax: -0.6, az: -0.2, by: -0.5 } },
+  globo: { prep: { ax: 0.4, az: -0.7, by: 0.9, lx: -1.0 }, hit: { ax: -0.9, az: -0.8, by: 0 }, follow: { ax: -2.9, az: -0.3, by: -0.3 } },
+  volea: { dur: 0.25, prep: { ax: -1.3, az: -1.0, by: 0.7, lx: -1.0 }, hit: { ax: -1.5, az: -0.9, by: 0 }, follow: { ax: -1.5, az: -0.5, by: -0.2 } },
   bandeja: { dur: 0.42, prep: { ax: -2.6, az: -0.9, by: 1.0, lx: -1.6 }, hit: { ax: -2.3, az: -1.4, by: 0.2, lx: -0.8 }, follow: { ax: -1.2, az: -1.5, by: -0.5, lx: -0.3 } },
   vibora: { dur: 0.42, prep: { ax: -2.8, az: -1.2, by: 1.2, lx: -1.8 }, hit: { ax: -2.2, az: -1.7, by: 0, lx: -0.6 }, follow: { ax: -0.7, az: 0.6, by: -1.0, lx: -0.2 } },
   rulo: { dur: 0.42, prep: { ax: -1.6, az: -0.6, by: 0.7, lx: -1.6 }, hit: { ax: -2.8, az: -0.6, by: 0.1, lx: -1.0 }, follow: { ax: -2.2, az: 0.8, by: -0.9 } },
@@ -100,6 +102,15 @@ export class Player {
     this.moveDelay = 0;
     this.speed = C.PLAYER_SPEED;
     this.runPhase = 0;
+    this.yaw = this.facing;
+    this.time = Math.random() * 10;
+    this.mode = 'ready';
+    this.splitT = 0;
+    this.toHit = 0; // s hasta su próximo golpe (lo fija el partido)
+    this.watchFor = 0; // s que sigue la bola con el cuerpo (lectura de pared)
+    this.watchDelay = 0; // s hasta que empieza a seguirla (el bote)
+    this.lookTarget = null;
+    this.lament = 0;
     this.swingT = -1;
     this.swingDur = 0.32;
     this.swingKind = 'drive';
@@ -149,8 +160,9 @@ export class Player {
     const hit = { ...IDLE, ...P.hit };
     const saved = {
       ax: this.armR.rotation.x, az: this.armR.rotation.z, by: this.body.rotation.y, y: this.body.position.y,
-      ry: this.root.rotation.y, p: this.root.position.clone(),
+      ry: this.root.rotation.y, p: this.root.position.clone(), lean: this.body.rotation.x,
     };
+    this.body.rotation.x = 0;
     this.root.position.set(0, 0, 0);
     this.root.rotation.y = this.facing;
     const v = new THREE.Vector3();
@@ -176,6 +188,8 @@ export class Player {
       return best;
     };
     let jump = hit.jump;
+    // Volea alta o bloqueo: sale saltando a por la bola
+    if (kind === 'volea' && point.y > A.VOLLEY_JUMP_H) jump = Math.min(C.MAX_JUMP, point.y - A.VOLLEY_JUMP_H + 0.15);
     let best = sweep(jump);
     if (best.d > 0.01) {
       // Ni con el brazo recto llega: salta (bola alta) o se agacha (bola baja)
@@ -189,6 +203,7 @@ export class Player {
     this.armR.rotation.set(saved.ax, 0, saved.az);
     this.body.rotation.y = saved.by;
     this.body.position.y = saved.y;
+    this.body.rotation.x = saved.lean;
     this.root.rotation.y = saved.ry;
     this.root.position.copy(saved.p);
     this.root.updateMatrixWorld(true);
@@ -203,18 +218,34 @@ export class Player {
 
   release() { this.hold = null; }
 
+  /** Orienta al jugador de cara a la red al instante (para el fotograma de contacto). */
+  faceNetNow() {
+    this.yaw = this.facing;
+    this.root.rotation.y = this.facing;
+  }
+
+  /** Saltito de "split-step" justo cuando golpea el rival. */
+  splitStep() {
+    if (this.swingT < 0 && !(this.celebrate > 0)) this.splitT = A.SPLIT_STEP_T;
+  }
+
   update(dt) {
-    // Desplazamiento con aceleración y frenada (llegada suave al objetivo)
+    this.time += dt;
+    // ---- 1. Desplazamiento con aceleración y frenada ----
     if (this.moveDelay > 0) this.moveDelay -= dt;
-    let wx = 0, wz = 0;
-    if (this.target && !(this.moveDelay > 0)) {
-      const dx = this.target.x - this.pos.x;
-      const dz = this.target.z - this.pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 0.02) {
-        const want = Math.min(this.speed, Math.sqrt(2 * C.PLAYER_DECEL * d));
-        wx = (dx / d) * want;
-        wz = (dz / d) * want;
+    if (this.toHit > 0) this.toHit -= dt;
+    // Lectura de pared: empieza a seguir la bola con el cuerpo cuando bota, hasta que sale del cristal
+    if (this.watchDelay > 0) this.watchDelay -= dt;
+    else if (this.watchFor > 0) this.watchFor -= dt;
+    let wx = 0, wz = 0, dist = 0, dx = 0, dz = 0;
+    if (this.target && !(this.moveDelay > 0) && !(this.lament > 0)) {
+      dx = this.target.x - this.pos.x;
+      dz = this.target.z - this.pos.z;
+      dist = Math.hypot(dx, dz);
+      if (dist > 0.02) {
+        const want = Math.min(this.speed, Math.sqrt(2 * C.PLAYER_DECEL * dist));
+        wx = (dx / dist) * want;
+        wz = (dz / dist) * want;
       }
     }
     const ax = wx - this.vel.x, az = wz - this.vel.z;
@@ -225,57 +256,166 @@ export class Player {
     this.vel.z += az * k;
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
-    const moving = Math.hypot(this.vel.x, this.vel.z) > 0.35;
-    if (moving) this.runPhase += dt * 14;
-    else this.runPhase *= 0.8;
-    const sw = Math.sin(this.runPhase) * (moving ? 0.7 : 0);
-    this.legs[0].rotation.x = sw;
-    this.legs[1].rotation.x = -sw;
-    this.body.position.y = moving ? Math.abs(Math.cos(this.runPhase)) * 0.06 : 0;
+    const speed = Math.hypot(this.vel.x, this.vel.z);
 
-    // Celebración: saltitos
+    // ---- 2. Hacia dónde mira el cuerpo ----
+    // Por defecto de cara a la red. Para recorridos largos hacia atrás se da la vuelta y corre;
+    // para recorridos largos laterales o hacia delante mira hacia donde corre; mirando la bola si lee la pared.
+    const fwdZ = -this.side; // hacia la red
+    let want = this.facing;
+    const swinging = this.swingT >= 0;
+    if (swinging || this.toHit > 0 && this.toHit < A.FACE_NET_BEFORE) want = this.facing;
+    else if (this.watchFor > 0 && this.lookTarget) {
+      want = Math.atan2(this.lookTarget.x - this.pos.x, this.lookTarget.z - this.pos.z);
+    } else if (dist > 0.02) {
+      const back = (dz * fwdZ) / dist < -0.55; // el destino queda detrás
+      if (back && dist > A.TURN_RUN_DIST) want = Math.atan2(dx, dz);
+      else if (!back && dist > A.RUN_FACE_DIST) want = Math.atan2(dx, dz);
+    }
+    let dy = Math.atan2(Math.sin(want - this.yaw), Math.cos(want - this.yaw));
+    const turn = A.TURN_RATE * dt;
+    this.yaw += Math.max(-turn, Math.min(turn, dy));
+    this.root.rotation.y = this.yaw;
+
+    // ---- 3. Modo de paso según la velocidad en la referencia del cuerpo ----
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    const vF = this.vel.x * fx + this.vel.z * fz; // hacia donde mira
+    const vS = this.vel.x * fz - this.vel.z * fx; // lateral
+    let mode = 'ready';
+    if (speed > A.MOVE_MIN) mode = Math.abs(vF) >= Math.abs(vS) * 0.8 ? (vF > 0 ? 'run' : 'backpedal') : 'shuffle';
+    this.mode = mode;
+
+    const L0 = this.legs[0], L1 = this.legs[1];
+    let bodyY = 0;
+    let lean = 0;
+    let sw = 0;
+    if (mode === 'ready') {
+      // Piernas abiertas y rodillas "flexionadas" (cadera baja), rebote suave sobre las puntas
+      this.runPhase = 0;
+      const spread = A.READY_SPREAD;
+      L0.rotation.set(0.05, 0, -spread);
+      L1.rotation.set(-0.05, 0, spread);
+      bodyY = -0.78 * (1 - Math.cos(spread)) + Math.sin(this.time * A.READY_BOB_FREQ) * A.READY_BOB;
+      lean = A.READY_LEAN;
+    } else if (mode === 'shuffle') {
+      // Pasos laterales sin cruzar los pies: las piernas se abren y se cierran
+      this.runPhase += dt * (A.SHUFFLE_FREQ + speed * 1.2);
+      const o = 0.5 + 0.5 * Math.sin(this.runPhase);
+      const spread = A.SHUFFLE_MIN + (A.SHUFFLE_MAX - A.SHUFFLE_MIN) * o;
+      L0.rotation.set(0, 0, -spread);
+      L1.rotation.set(0, 0, spread);
+      bodyY = -0.78 * (1 - Math.cos(spread)) + Math.abs(Math.cos(this.runPhase)) * A.SHUFFLE_HOP;
+      lean = A.READY_LEAN;
+    } else {
+      // Carrera (o pasos atrás): zancada y cadencia según la velocidad, tronco inclinado
+      const backp = mode === 'backpedal';
+      this.runPhase += dt * (A.STRIDE_FREQ + speed * A.STRIDE_FREQ_K) * (backp ? -0.8 : 1);
+      const amp = Math.min(A.STRIDE_MAX, speed * A.STRIDE_K) * (backp ? 0.6 : 1);
+      sw = Math.sin(this.runPhase) * amp;
+      L0.rotation.set(sw, 0, -0.06);
+      L1.rotation.set(-sw, 0, 0.06);
+      bodyY = Math.abs(Math.cos(this.runPhase)) * A.RUN_BOB * Math.min(1, speed / 3);
+      lean = backp ? A.LEAN_BACK : A.LEAN_RUN * Math.min(1, speed / this.speed) + Math.max(0, ax * fx + az * fz) * 0.01;
+    }
+
+    // Split-step
+    if (this.splitT > 0) {
+      this.splitT -= dt;
+      bodyY += Math.sin(Math.PI * Math.max(0, this.splitT) / A.SPLIT_STEP_T) * A.SPLIT_STEP_H;
+    }
+
+    this.body.position.y = bodyY;
+    this.body.rotation.x += (lean - this.body.rotation.x) * Math.min(1, dt * 10);
+    this.updateHead(dt);
+
+    // ---- 4. Gestos de fin de punto ----
     if (this.celebrate > 0) {
       this.celebrate -= dt;
+      const t = this.time;
+      this.body.position.y = Math.abs(Math.sin(t * 9)) * 0.28;
+      this.body.rotation.x = 0;
+      this.armR.rotation.set(-2.9 + Math.sin(t * 18) * 0.25, 0, -0.2); // puño con la pala arriba
+      this.armL.rotation.set(-1.4 - Math.sin(t * 9) * 0.6, 0, -0.3);
+      this.head.rotation.set(-0.3, 0, 0);
+      return;
+    }
+    if (this.lament > 0) {
+      this.lament -= dt;
       this.target = null;
-      this.body.position.y = Math.abs(Math.sin(this.celebrate * 12)) * 0.25;
-      this.arms[0].rotation.set(-2.8, 0, -0.3);
-      this.arms[1].rotation.set(-2.8, 0, 0.3);
+      // Manos a la cabeza y cabeza baja
+      this.body.position.y = 0;
+      this.body.rotation.x = 0.12;
+      this.armR.rotation.set(-2.7, 0, 0.95);
+      this.armL.rotation.set(-2.7, 0, -0.95);
+      this.head.rotation.set(0.45, Math.sin(this.time * 3) * 0.15, 0);
       return;
     }
 
-    // Golpe: interpolación entre poses clave (reposo → preparación → contacto → terminación → reposo)
-    if (this.swingT >= 0) {
+    // ---- 5. Brazos: golpe (prioridad) o brazos de espera / carrera ----
+    if (swinging) {
+      // Interpolación entre poses clave (reposo → preparación → contacto → terminación → reposo)
       const P0 = POSES[this.swingKind] || POSES.drive;
       const P = this.hitPose ? { ...P0, hit: { ...P0.hit, ...this.hitPose } } : P0;
       this.swingT += dt / (P.dur || 0.36);
       if (this.hold != null) this.swingT = Math.min(this.swingT, this.hold);
       const u = Math.min(1, this.swingT);
-      let a, b, k;
-      if (u < 0.35) [a, b, k] = [IDLE, P.prep, u / 0.35];
-      else if (u < 0.5) [a, b, k] = [P.prep, P.hit, (u - 0.35) / 0.15];
-      else if (u < 0.75) [a, b, k] = [P.hit, P.follow, (u - 0.5) / 0.25];
-      else [a, b, k] = [P.follow, IDLE, (u - 0.75) / 0.25];
-      const e = k * k * (3 - 2 * k);
+      let a, b, kk;
+      if (u < 0.35) [a, b, kk] = [IDLE, P.prep, u / 0.35];
+      else if (u < 0.5) [a, b, kk] = [P.prep, P.hit, (u - 0.35) / 0.15];
+      else if (u < 0.75) [a, b, kk] = [P.hit, P.follow, (u - 0.5) / 0.25];
+      else [a, b, kk] = [P.follow, IDLE, (u - 0.75) / 0.25];
+      const e = kk * kk * (3 - 2 * kk);
       const g = (key) => (a[key] ?? IDLE[key]) + ((b[key] ?? IDLE[key]) - (a[key] ?? IDLE[key])) * e;
       this.armR.rotation.set(g('ax'), 0, g('az'));
       this.armL.rotation.set(g('lx'), 0, 0.15);
       this.body.rotation.y = g('by');
+      this.body.rotation.x = 0; // el contacto calculado con reach() asume el tronco recto
       const jy = g('jump');
       this.body.position.y = jy;
+      // Piernas: apoyo abierto y adelantado (transferencia de peso) o agachado para bolas bajas
       if (jy < 0) {
-        // Agachado: piernas abiertas para bajar la cadera sin hundir los pies
-        const a = Math.acos(Math.max(0.3, Math.min(1, (0.78 + jy) / 0.78)));
-        this.legs[0].rotation.x = a;
-        this.legs[1].rotation.x = -a;
+        const aa = Math.acos(Math.max(0.3, Math.min(1, (0.78 + jy) / 0.78)));
+        L0.rotation.set(aa, 0, 0);
+        L1.rotation.set(-aa, 0, 0);
+      } else if (jy > 0.05) {
+        L0.rotation.set(0.5, 0, 0); // recoge las piernas en el salto
+        L1.rotation.set(-0.2, 0, 0);
+      } else if (mode === 'ready') {
+        const w = u < 0.5 ? -0.35 : 0.35; // peso atrás en la preparación, delante en el golpe
+        L0.rotation.set(w, 0, -0.2);
+        L1.rotation.set(-w, 0, 0.2);
       }
       if (u >= 1) {
         this.swingT = -1;
         this.idlePose();
       }
+    } else if (mode === 'ready' || mode === 'shuffle') {
+      // Pala delante con la mano libre junto a ella
+      const t = this.time;
+      this.armR.rotation.set(A.READY_ARM_X + Math.sin(t * A.READY_BOB_FREQ) * 0.04, 0, A.READY_ARM_Z);
+      this.armL.rotation.set(A.READY_ARM_X, 0, -A.READY_ARM_Z * 2.2);
+      this.body.rotation.y *= 0.8;
     } else {
-      this.armL.rotation.x = -0.3 - sw * 0.6;
+      // Carrera: brazos opuestos a las piernas; la pala se mueve menos
+      this.armL.rotation.set(-0.35 - sw * 0.9, 0, 0.1);
+      this.armR.rotation.set(-0.7 + sw * 0.45, 0, -0.15);
+      this.body.rotation.y *= 0.8;
     }
-    if (!moving) this.root.rotation.y = this.facing;
-    else this.root.rotation.y = this.facing + Math.max(-0.4, Math.min(0.4, this.vel.x * this.side * 0.08));
+  }
+
+  /** La cabeza sigue a la bola (giro y cabeceo limitados). */
+  updateHead(dt) {
+    let hy = 0, hp = 0;
+    if (this.lookTarget) {
+      const t = this.lookTarget;
+      const dx = t.x - this.pos.x, dz = t.z - this.pos.z;
+      const dyaw = Math.atan2(dx, dz) - this.yaw - this.body.rotation.y;
+      hy = Math.max(-A.HEAD_MAX_YAW, Math.min(A.HEAD_MAX_YAW, Math.atan2(Math.sin(dyaw), Math.cos(dyaw))));
+      // Si queda a la espalda, gira lo que puede (mira por encima del hombro)
+      hp = Math.max(-A.HEAD_MAX_PITCH, Math.min(A.HEAD_MAX_PITCH, Math.atan2(t.y - 1.6, Math.hypot(dx, dz))));
+    }
+    const kk = Math.min(1, dt * 12);
+    this.head.rotation.y += (hy - this.head.rotation.y) * kk;
+    this.head.rotation.x += (-hp - this.head.rotation.x) * kk;
   }
 }

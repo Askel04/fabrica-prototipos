@@ -70,7 +70,7 @@ export class VolleyMode {
     const sx = rand(-2, 2);
     striker.pos.set(sx, 0, -V.STRIKER_Z);
     m.rivals[1].pos.set(-Math.sign(sx || 1) * 2.4, 0, -6.5);
-    [...m.team, ...m.rivals].forEach((p) => { p.vel = { x: 0, z: 0 }; p.celebrate = 0; p.idlePose(); });
+    [...m.team, ...m.rivals].forEach((p) => { p.vel = { x: 0, z: 0 }; p.celebrate = 0; p.lament = 0; p.swingT = -1; p.faceNetNow(); p.idlePose(); });
     const hand = m.racketPoint(striker);
     this.hitPos = { x: hand.x, y: V.SMASH_H, z: hand.z + 0.2 };
     // El que remata se coloca para que su pala toque la bola en lo alto

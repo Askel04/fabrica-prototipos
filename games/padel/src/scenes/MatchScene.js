@@ -307,11 +307,12 @@ export class MatchScene {
     p.target = null;
     p.vel = { x: 0, z: 0 };
     p.pos.set(r.body.x, 0, r.body.z);
-    p.root.rotation.y = p.facing;
+    p.faceNetNow();
     p.holdContact(anim, r.hit);
     const f = p.racketWorld();
     const err = Math.hypot(f.x - pos.x, f.y - pos.y, f.z - (pos.z + p.side * ballR));
     this.contactErrs.push(+err.toFixed(3));
+    p.release(); // el golpe sigue con la terminación
     return err;
   }
 
@@ -334,6 +335,12 @@ export class MatchScene {
       p.target = null;
       p.vel = { x: 0, z: 0 };
       p.celebrate = 0;
+      p.lament = 0;
+      p.toHit = 0;
+      p.watchFor = 0;
+      p.watchDelay = 0;
+      p.swingT = -1;
+      p.faceNetNow();
       p.idlePose();
     });
   }
@@ -464,6 +471,8 @@ export class MatchScene {
         + (this.lastQ > 0.85 ? A.missPerfect : 0) + this.rally * A.missPerRally;
       contact.miss = Math.random() < miss;
     }
+    // Los que reciben hacen el split-step al golpear el rival
+    recvTeam.forEach((p) => p.splitStep());
     // Quien golpea: tras un globo sube a la red; si ya estaba en la red se queda; si no, al fondo
     moveTeam(hitTeam, kind === 'globo' || Math.abs(player.pos.z) < 6 ? 'net' : 'back', pos.x, 0.1);
     if (contact) {
@@ -474,6 +483,15 @@ export class MatchScene {
       const r = p.reach(contact.pos, contact.anim);
       contact.hit = r.hit;
       p.moveTo(r.body.x, r.body.z, C.REACTION);
+      p.toHit = contact.t;
+      if (contact.afterWall) {
+        // Lectura de pared: se gira hacia el cristal siguiendo la bola y luego se coloca para golpear
+        const wall = path.events.find((e) => e.type === 'wall' && Math.sign(e.z) === -hitter && e.t > (outcome.legalBounceT ?? 0));
+        if (wall) {
+          p.watchDelay = outcome.legalBounceT ?? 0;
+          p.watchFor = Math.max(0, Math.min(wall.t + C.ANIM.WALL_WATCH_EXTRA, contact.t - C.ANIM.FACE_NET_BEFORE) - p.watchDelay);
+        }
+      }
       const mate = recvTeam[1 - contact.idx];
       const deep = Math.abs(contact.pos.z) > 6 || kind === 'globo';
       mate.moveTo(contact.idx === 0 ? C.HOME_X : -C.HOME_X, -hitter * (deep ? C.HOME_BACK_Z : C.NET_Z), C.REACTION);
@@ -616,7 +634,7 @@ export class MatchScene {
       (win ? this.team : this.rivals).forEach((p) => (p.celebrate = 2.4));
     }
     vibrate(win ? [30, 40, 60] : 60);
-    (win ? this.team : this.rivals).forEach((p) => (p.celebrate = Math.max(p.celebrate, 1.2)));
+    this.endGestures(win ? this.team : this.rivals, win ? this.rivals : this.team);
     if (this.opp) {
       this.after(C.POINT_END_DELAY, () => this.opp.resolve(winner));
       return;
@@ -630,6 +648,21 @@ export class MatchScene {
       return;
     }
     this.after(C.POINT_END_DELAY + (gameWon ? 0.8 : 0), () => this.startPoint());
+  }
+
+  /** Fin de punto: los ganadores lo celebran juntándose; los que pierden se llevan las manos a la cabeza. */
+  endGestures(winners, losers) {
+    const mx = (winners[0].pos.x + winners[1].pos.x) / 2;
+    const mz = (winners[0].pos.z + winners[1].pos.z) / 2;
+    winners.forEach((p, i) => {
+      p.swingT = -1;
+      p.celebrate = Math.max(p.celebrate, 1.4);
+      p.moveTo(mx + (i ? 0.4 : -0.4), mz);
+    });
+    losers.forEach((p) => {
+      p.swingT = -1;
+      p.lament = C.ANIM.LAMENT_T;
+    });
   }
 
   endMatch(winner, extra = {}) {
@@ -690,7 +723,7 @@ export class MatchScene {
     p.target = null;
     p.vel = { x: 0, z: 0 };
     this.placeLerp = { p, from: p.pos.clone(), to: new THREE.Vector3(r.body.x, 0, r.body.z), t: 0 };
-    p.root.rotation.y = p.facing;
+    p.faceNetNow();
     p.holdContact(c.anim, r.hit);
     this.ball.position.set(cp.x, cp.y, cp.z);
   }
@@ -758,7 +791,7 @@ export class MatchScene {
     this.placeLerp = null;
     const r = p.reach(cp, c.anim, C.BALL_VISUAL_R * C.IMPACT_BALL_SCALE);
     p.pos.set(r.body.x, 0, r.body.z);
-    p.root.rotation.y = p.facing;
+    p.faceNetNow();
     p.swing(c.anim, 0.35, r.hit);
     this.impact = { stroke: null, released: false, wait: 0, done: false };
     vibrate(10);
@@ -976,7 +1009,10 @@ export class MatchScene {
       }
     }
 
-    for (const p of [...this.team, ...this.rivals]) p.update(gdt);
+    for (const p of [...this.team, ...this.rivals]) {
+      p.lookTarget = this.ball.position; // todos siguen la bola con la cabeza
+      p.update(gdt);
+    }
     this.updateParticles(dt);
     this.updateCamera(dt);
     this.app.renderer.render(this.scene, this.camera);

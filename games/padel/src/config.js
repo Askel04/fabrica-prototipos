@@ -135,6 +135,39 @@ export const CONFIG = {
   HOME_BACK_Z: 8.2,
   HOME_X: 2.5,
 
+  // Animación de los jugadores
+  ANIM: {
+    TURN_RATE: 9, // rad/s de giro del cuerpo
+    TURN_RUN_DIST: 2.6, // m: hacia atrás más lejos que esto, se da la vuelta y corre
+    RUN_FACE_DIST: 3, // m: recorridos largos hacia delante o laterales se corren de frente al destino
+    FACE_NET_BEFORE: 0.3, // s antes del golpe en que vuelve a ponerse de cara a la red
+    MOVE_MIN: 0.35, // m/s: por debajo, posición de espera
+    READY_SPREAD: 0.36, // rad de apertura de piernas en espera (baja la cadera)
+    READY_BOB: 0.018, // m de rebote sobre las puntas
+    READY_BOB_FREQ: 9,
+    READY_LEAN: 0.12, // rad de inclinación del tronco hacia delante
+    READY_ARM_X: -0.95, // pala delante
+    READY_ARM_Z: 0.22,
+    SHUFFLE_MIN: 0.12,
+    SHUFFLE_MAX: 0.5,
+    SHUFFLE_FREQ: 11,
+    SHUFFLE_HOP: 0.05,
+    STRIDE_FREQ: 8,
+    STRIDE_FREQ_K: 1.7,
+    STRIDE_K: 0.17,
+    STRIDE_MAX: 0.95,
+    RUN_BOB: 0.07,
+    LEAN_RUN: 0.3,
+    LEAN_BACK: -0.1,
+    SPLIT_STEP_T: 0.18,
+    SPLIT_STEP_H: 0.1,
+    HEAD_MAX_YAW: 1.3,
+    HEAD_MAX_PITCH: 0.7,
+    VOLLEY_JUMP_H: 1.75, // volea por encima de esta altura: salta
+    WALL_WATCH_EXTRA: 0.15, // s que sigue mirando tras el bote en el cristal
+    LAMENT_T: 1.3,
+  },
+
   // IA
   AI: {
     errBase: 1.4, // m de error
