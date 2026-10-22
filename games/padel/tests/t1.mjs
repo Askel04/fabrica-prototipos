@@ -25,7 +25,16 @@ if (await page.evaluate(`${S}.phase`) === 'tactical') {
   await shot('04-impacto');
   if (kind !== 'late') {
     if (kind === 'early') await waitFor(`(${S}.gameTime - ${S}.shot.t0 - ${S}.shot.contact.t) > -0.12`);
-    else if (kind === 'waited') await waitFor(`${S}.impact.wait > 0.06`);
+    else if (kind === 'waited') {
+      await waitFor(`${S}.impact.wait > 0.06`);
+      // Antes de deslizar: la bola espera apoyada en la pala
+      console.log('pala-bola esperando (m):', await page.evaluate(`(() => { const s = ${S}; const p = s.team[s.shot.contact.idx]; const f = p.racketWorld(); const b = s.ball.position;
+        return +Math.hypot(f.x - b.x, f.y - b.y, f.z - (b.z + p.side * p.side * 0.07 * 6)).toFixed(3); })()`));
+      await page.evaluate(`${S}.debugFreeze = 'all'`);
+      await page.waitForTimeout(150);
+      await shot('04b-esperando');
+      await page.evaluate(`${S}.debugFreeze = false`);
+    }
     else await waitFor(`(${S}.gameTime - ${S}.shot.t0 - ${S}.shot.contact.t) > -0.03`);
     await page.evaluate(`${S}.debugFreeze = true`); // el navegador sin GPU va lento: congelar mientras se desliza
     await page.waitForTimeout(100);

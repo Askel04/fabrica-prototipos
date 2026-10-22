@@ -182,6 +182,7 @@ export class MatchScene {
     this.shake = 0;
     this.hitStop = 0;
     this.contactErrs = []; // distancia pala-bola en cada contacto (pruebas)
+    this.aiCorrections = []; // m que la IA corrige al final de su carrera (pruebas)
     this.fovKick = 0;
     this.squash = 0;
     this.follow = new THREE.Vector3();
@@ -324,7 +325,7 @@ export class MatchScene {
     this.shot = null;
     this.layer.innerHTML = '';
     this.arrow.visible = false;
-    this.ball.scale.setScalar(1);
+    this.ballScale = 1;
     this.trailPos.length = 0;
     this.trail.forEach((m) => (m.visible = false));
     this.beam.visible = false;
@@ -771,7 +772,7 @@ export class MatchScene {
     const D = C.SIDE_CAM_DIST;
     const A = C.SIDE_CAM_LOOK_AHEAD;
     this.blendCamera({ pos: [cp.x + D, cp.y + 0.35, cp.z - A], look: [cp.x, cp.y, cp.z - A] }, 0.3);
-    this.ball.scale.setScalar(C.IMPACT_BALL_SCALE);
+    this.ballScale = C.IMPACT_BALL_SCALE;
     const L = this.layer;
     L.innerHTML = '';
     el('div', 'vignette', L);
@@ -793,7 +794,7 @@ export class MatchScene {
     p.pos.set(r.body.x, 0, r.body.z);
     p.faceNetNow();
     p.swing(c.anim, 0.35, r.hit);
-    this.impact = { stroke: null, released: false, wait: 0, done: false };
+    this.impact = { stroke: null, wait: 0, done: false };
     vibrate(10);
     whooshSound();
   }
@@ -851,7 +852,25 @@ export class MatchScene {
       this.swipePts = null;
       return;
     }
+    this.showSpinMark(st, c, r);
     this.resolveHit(st);
+  }
+
+  /** Marca el punto de contacto y el sentido del efecto sobre la bola grande. */
+  showSpinMark(st, c, r) {
+    const ui = this.app.ui;
+    const x = c.x + st.contact.x * this.fwd * r * (st.backward ? -1 : 1);
+    const y = c.y - st.contact.y * r;
+    const dot = el('div', 'spindot', ui);
+    Object.assign(dot.style, { left: `${x}px`, top: `${y}px` });
+    if (Math.abs(st.spin) > 0.15) {
+      // Liftado: la parte de arriba de la bola va hacia el rival
+      const cw = (st.spin > 0) === (this.fwd > 0);
+      const m = el('div', 'spinmark', ui, cw ? '↻' : '↺');
+      Object.assign(m.style, { left: `${c.x}px`, top: `${c.y}px`, fontSize: `${r * 1.6}px`, color: st.spin > 0 ? '#ffe066' : '#7fd3ff' });
+      setTimeout(() => m.remove(), 700);
+    }
+    setTimeout(() => dot.remove(), 700);
   }
 
   /** Guarda el trazo. El golpe sale cuando la bola llega a la pala (si fue pronto) o en el acto (si esperaba). */
@@ -917,7 +936,7 @@ export class MatchScene {
   exitImpact() {
     this.layer.innerHTML = '';
     this.court.sideX.visible = true;
-    this.ball.scale.setScalar(1);
+    this.ballScale = 1;
     this.phase = 'live';
     this.timeScale = C.SLOWMO;
     this.rampTime = true;
@@ -967,14 +986,15 @@ export class MatchScene {
     if (imp) {
       const cT = this.shot.t0 + this.shot.contact.t;
       const p = this.team[this.shot.contact.idx];
-      if (imp.stroke && !imp.released && this.gameTime + gdt >= cT - swingDur(p.swingKind) * (SWING_HIT_U - 0.35)) {
-        imp.released = true;
-        p.release();
-      }
       if (this.gameTime + gdt >= cT) {
         imp.wait += this.gameTime + gdt - cT; // tiempo de juego "virtual" que la bola lleva esperando en la pala
         gdt = Math.max(0, cT - this.gameTime);
       }
+      // La pala avanza de la preparación al contacto a la vez que llega la bola (deslices o no):
+      // al llegar, la bola queda apoyada en la pala esperando el trazo
+      const k = clamp(1 + (this.gameTime + gdt - cT) / C.FORWARD_SWING_T, 0, 1);
+      p.hold = 0.35 + (SWING_HIT_U - 0.35) * k;
+      p.swingT = p.hold;
     }
     this.gameTime += gdt;
     if (this.placeLerp) {
@@ -1062,6 +1082,18 @@ export class MatchScene {
           c.swung = true;
           p.swing(c.anim, null, c.miss ? null : c.hit);
         }
+        // Últimos instantes: termina de colocarse con suavidad en su punto de contacto (sin saltos al golpear)
+        if (!c.miss && t >= c.t - C.AI_ARRIVE_T) {
+          if (!c.arrive) {
+            const r = p.reach(c.pos, c.anim);
+            c.arrive = { from: p.pos.clone(), to: new THREE.Vector3(r.body.x, 0, r.body.z) };
+            this.aiCorrections.push(+c.arrive.from.distanceTo(c.arrive.to).toFixed(3));
+          }
+          const k = ease(clamp(1 - (c.t - t) / C.AI_ARRIVE_T, 0, 1));
+          p.target = null;
+          p.vel = { x: 0, z: 0 };
+          p.pos.lerpVectors(c.arrive.from, c.arrive.to, k);
+        }
         if (t >= c.t) {
           c.done = true;
           if (!c.miss) {
@@ -1129,7 +1161,9 @@ export class MatchScene {
   updateParticles(dt) {
     if (this.squash > 0) this.squash = Math.max(0, this.squash - dt / C.SQUASH_TIME);
     const sq = C.SQUASH * Math.sin(this.squash * Math.PI) ;
-    this.ball.scale.set(1 + sq * 0.6, 1 - sq, 1 + sq * 0.6);
+    // Tamaño base (grande en la cámara lenta) por el aplastamiento del bote
+    const bs = this.ballScale ?? 1;
+    this.ball.scale.set(bs * (1 + sq * 0.6), bs * (1 - sq), bs * (1 + sq * 0.6));
     for (const p of this.parts) {
       if (p.life <= 0) continue;
       p.life -= dt;

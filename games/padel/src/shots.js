@@ -62,7 +62,9 @@ export function buildShot({ p, side, yaw, power, family, stroke, q = 1, dev = 0,
   // Cuanto más tangencial (roce), menos manda la dirección del trazo y más el gesto nominal de la familia
   const effAngle = lerp(stroke.angle, f.angle, clamp(stroke.tang ?? 0, 0, 1));
   const gesture = clamp((effAngle - f.angle) * f.angleGain, -C.GESTURE_MAX_DEG, C.GESTURE_MAX_DEG);
-  const elevErr = (gesture + (Math.random() * 2 - 1) * err * C.ELEV_ERR_DEG) * (Math.PI / 180);
+  // Punto de contacto: por debajo del centro la bola sale más alta, por encima más baja
+  const contactElev = -(stroke.contact?.y ?? 0) * C.CONTACT_ELEV_DEG;
+  const elevErr = (gesture + contactElev + (Math.random() * 2 - 1) * err * C.ELEV_ERR_DEG) * (Math.PI / 180);
   const yawErr = dev + (Math.random() * 2 - 1) * err * C.YAW_ERR_DEG * (Math.PI / 180);
   const sp = Math.hypot(sol.v.x, sol.v.y, sol.v.z);
   const elev = Math.asin(clamp(sol.v.y / sp, -1, 1)) + elevErr;

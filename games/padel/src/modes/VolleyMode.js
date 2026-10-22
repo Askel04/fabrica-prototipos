@@ -57,7 +57,7 @@ export class VolleyMode {
     m.shot = null;
     m.layer.innerHTML = '';
     m.arrow.visible = false;
-    m.ball.scale.setScalar(1);
+    m.ballScale = 1;
     m.trailPos.length = 0;
     m.timeScale = 1;
     // Solo se ven tu pala, la red y los rivales; tus jugadores se apartan y se ocultan

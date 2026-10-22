@@ -38,5 +38,7 @@ await page.waitForTimeout(500);
 await shot('opp-final');
 const errs = await page.evaluate(`${S}.contactErrs`);
 console.log('contactos pala-bola:', errs.length, 'peor (m):', Math.max(...errs));
+const corr = await page.evaluate(`${S}.aiCorrections`);
+console.log('corrección final de la IA (m): media', (corr.reduce((a, b) => a + b, 0) / Math.max(1, corr.length)).toFixed(3), 'máx', Math.max(0, ...corr), 'n', corr.length);
 console.log('ERRORES:', errors.length ? errors : 0);
 await browser.close();

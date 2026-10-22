@@ -88,6 +88,11 @@ export const CONFIG = {
   VOLLEY_NET_D: 4,
   LOB_ANGLE: 32, // trazo más empinado que esto desde abajo = globo
   STROKE_SPIN_CURVE: 0.8,
+  STROKE_FLAT_DEG: 12, // desvío del trazo respecto al centro por debajo del cual el golpe es plano
+  STROKE_FULL_DEG: 70, // desvío con el que el efecto es máximo (roce casi tangente)
+  CONTACT_ELEV_DEG: 5, // golpear por debajo del centro levanta la bola y por encima la baja (grados por radio)
+  FORWARD_SWING_T: 0.12, // s de juego: la pala avanza de la preparación al contacto al llegar la bola
+  AI_ARRIVE_T: 0.25, // s de juego: la IA termina de colocarse con suavidad antes de golpear
   GESTURE_MAX_DEG: 7,
   ELEV_ERR_DEG: 7,
   YAW_ERR_DEG: 9,
@@ -128,7 +133,7 @@ export const CONFIG = {
   DODGE_DIST: 1.0, // m: si la bola pasa más cerca, el jugador se aparta
   DODGE_REACTION: 0.2, // s de juego antes de reaccionar
   BODY_R: 0.28, // m: radio del cuerpo para el pelotazo
-  REACH: 1.0, // alcance horizontal con la pala
+  REACH: 0.35, // margen (m) para dar por alcanzable una bola: el cuerpo se coloca luego con reach()
   MIN_HIT_H: 0.25,
   MAX_HIT_H: 2.9,
   REACTION: 0.12,
