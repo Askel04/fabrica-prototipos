@@ -333,6 +333,7 @@ export class MatchScene {
     this.blendCamera(C.CAM_MAIN, 0.6);
     const all = [...this.team, ...this.rivals];
     all.forEach((p) => {
+      p.root.visible = true;
       p.target = null;
       p.vel = { x: 0, z: 0 };
       p.celebrate = 0;
@@ -794,6 +795,8 @@ export class MatchScene {
     p.pos.set(r.body.x, 0, r.body.z);
     p.faceNetNow();
     p.swing(c.anim, 0.35, r.hit);
+    // En la cámara lenta solo se ve la bola (a ese tamaño desentona junto a los muñecos)
+    [...this.team, ...this.rivals].forEach((q) => (q.root.visible = false));
     this.impact = { stroke: null, wait: 0, done: false };
     vibrate(10);
     whooshSound();
@@ -910,7 +913,8 @@ export class MatchScene {
     this.snapToContact(player, pos, anim, R);
     player.release();
     this.doHit(player, pos, sh.v, sh.spin, sh.side, family, { serve: contact.serve, power: this.power, q });
-    this.lastHit = { q, tErr, family, spin: sh.spin, angle: st.angle, dist: st.dist, contact: st.contact };
+    this.lastHit = { q, tErr, family, spin: sh.spin, angle: st.angle, dist: st.dist, contact: st.contact, face: sh.face };
+    this.showLaunchLine(sh.v);
 
     // Juice
     hitSound(this.power);
@@ -925,6 +929,19 @@ export class MatchScene {
     this.exitImpact();
   }
 
+  /** Línea corta desde la bola grande en la dirección de salida (vista lateral): explica por qué sale alta o baja. */
+  showLaunchLine(v) {
+    const c = this.ballScreen;
+    if (!c) return;
+    const e = Math.atan2(v.y, Math.hypot(v.x, v.z));
+    const line = el('div', 'launchline', this.app.ui);
+    Object.assign(line.style, {
+      left: `${c.x}px`, top: `${c.y}px`, width: `${this.ballR * 2.6}px`,
+      transform: `translateY(-50%) rotate(${this.fwd > 0 ? -e : Math.PI + e}rad)`,
+    });
+    setTimeout(() => line.remove(), 500);
+  }
+
   smashJuice(pos) {
     this.shake = C.SHAKE_SMASH;
     this.hitStop = Math.max(this.hitStop, C.SMASH_HIT_STOP);
@@ -935,12 +952,16 @@ export class MatchScene {
 
   exitImpact() {
     this.layer.innerHTML = '';
-    this.court.sideX.visible = true;
-    this.ballScale = 1;
     this.phase = 'live';
     this.timeScale = C.SLOWMO;
-    this.rampTime = true;
-    this.blendCamera(C.CAM_MAIN, C.CAM_BLEND);
+    // Un instante con la vista lateral para ver salir la bola por la línea; luego vuelve todo
+    this.after(C.IMPACT_HOLD, () => {
+      if (!this.volley?.active) [...this.team, ...this.rivals].forEach((p) => (p.root.visible = true));
+      this.court.sideX.visible = true;
+      this.ballScale = 1;
+      this.rampTime = true;
+      this.blendCamera(C.CAM_MAIN, C.CAM_BLEND);
+    });
   }
 
   pointer(type, e) {

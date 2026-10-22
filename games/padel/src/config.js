@@ -66,18 +66,18 @@ export const CONFIG = {
   NET_CLEARANCE: 0.25, // margen sobre la red con el que el solver busca la trayectoria ideal
 
   // Familias de golpe. speed: rango m/s que recorre la flecha (0-100 %); depth: m desde la red donde debe botar;
-  // angle: ángulo nominal del trazo (grados, + hacia arriba); angleGain: grados de elevación por grado de desvío del gesto.
+  // angle: ángulo nominal del trazo (IA); launchRef: ángulo de salida de una ejecución típica (cara de la pala).
   SHOTS: {
-    plano: { speed: [12, 25], depth: 7.4, depthPower: 1, branch: 'low', angle: 5, angleGain: 0.1, spinScale: 0.6, anim: 'drive' },
-    liftado: { speed: [11, 25], depth: 6.6, depthPower: 1, branch: 'low', angle: 30, angleGain: 0.08, spinScale: 1, spinMin: 0.35, anim: 'drive' },
-    cortado: { speed: [10, 21], depth: 8.2, depthPower: 0.8, branch: 'low', angle: -25, angleGain: 0.08, spinScale: 1, spinMin: -0.35, anim: 'cortado' },
-    globo: { speed: [9, 16], depth: 8.6, depthPower: 0.8, branch: 'high', angle: 50, angleGain: 0.12, spinScale: 0.5, anim: 'globo' },
-    volea: { speed: [9, 20], depth: 6.2, depthPower: 1.2, branch: 'low', angle: 0, angleGain: 0.1, spinScale: 0.5, anim: 'volea' },
-    bandeja: { speed: [12, 20], depth: 8, depthPower: 0.8, branch: 'low', angle: -15, angleGain: 0.08, spinScale: 0.8, spinMin: -0.3, anim: 'bandeja' },
-    vibora: { speed: [14, 24], depth: 8.5, depthPower: 0.6, branch: 'low', angle: -35, angleGain: 0.08, spinScale: 1, spinMin: -0.6, sideSpin: 0.5, anim: 'vibora' },
-    rulo: { speed: [14, 25], depth: 7.2, depthPower: 0.8, branch: 'low', angle: 20, angleGain: 0.08, spinScale: 1, spinMin: 0.5, anim: 'rulo' },
-    remate: { speed: [18, 32], depth: [5.5, 1.6], branch: 'low', angle: -40, angleGain: 0.06, spinScale: 0.4, anim: 'smash' },
-    saque: { speed: [8, 14], depth: 5, depthPower: 2.4, branch: 'low', angle: 10, angleGain: 0.08, spinScale: 0.7, anim: 'saque' },
+    plano: { speed: [12, 25], depth: 7.4, depthPower: 1, branch: 'low', angle: 5, launchRef: 0, spinScale: 0.6, anim: 'drive' },
+    liftado: { speed: [11, 25], depth: 6.6, depthPower: 1, branch: 'low', angle: 30, launchRef: 30, spinScale: 1, spinMin: 0.35, anim: 'drive' },
+    cortado: { speed: [10, 21], depth: 8.2, depthPower: 0.8, branch: 'low', angle: -25, launchRef: -25, spinScale: 1, spinMin: -0.35, anim: 'cortado' },
+    globo: { speed: [9, 16], depth: 8.6, depthPower: 0.8, branch: 'high', angle: 50, launchRef: 45, spinScale: 0.5, anim: 'globo' },
+    volea: { speed: [9, 20], depth: 6.2, depthPower: 1.2, branch: 'low', angle: 0, launchRef: 0, spinScale: 0.5, anim: 'volea' },
+    bandeja: { speed: [12, 20], depth: 8, depthPower: 0.8, branch: 'low', angle: -15, launchRef: -20, spinScale: 0.8, spinMin: -0.3, anim: 'bandeja' },
+    vibora: { speed: [14, 24], depth: 8.5, depthPower: 0.6, branch: 'low', angle: -35, launchRef: -30, spinScale: 1, spinMin: -0.6, sideSpin: 0.5, anim: 'vibora' },
+    rulo: { speed: [14, 25], depth: 7.2, depthPower: 0.8, branch: 'low', angle: 20, launchRef: 20, spinScale: 1, spinMin: 0.5, anim: 'rulo' },
+    remate: { speed: [18, 32], depth: [5.5, 1.6], branch: 'low', angle: -40, launchRef: -35, spinScale: 0.4, anim: 'smash' },
+    saque: { speed: [8, 14], depth: 5, depthPower: 2.4, branch: 'low', angle: 10, launchRef: 10, spinScale: 0.7, anim: 'saque' },
   },
   SMASH_MIN_H: 2.25, // por encima de la cabeza
   SMASH_MAX_DNET: 7, // y a esta distancia máxima de la red
@@ -90,10 +90,13 @@ export const CONFIG = {
   STROKE_SPIN_CURVE: 0.8,
   STROKE_FLAT_DEG: 12, // desvío del trazo respecto al centro por debajo del cual el golpe es plano
   STROKE_FULL_DEG: 70, // desvío con el que el efecto es máximo (roce casi tangente)
-  CONTACT_ELEV_DEG: 5, // golpear por debajo del centro levanta la bola y por encima la baja (grados por radio)
+  // Cara de la pala: la bola sale entre la normal de la cara (contacto → centro) y la dirección del brazo (trazo)
+  FACE_W: 0.6, // peso de la cara frente al brazo
+  FACE_GAIN: 0.4, // grados de salida por grado de diferencia con la ejecución típica de la familia (launchRef)
+  FACE_MAX_DEG: 15,
+  GRAZE_SPEED_LOSS: 0.22, // un roce pierde velocidad (se convierte en efecto)
   FORWARD_SWING_T: 0.12, // s de juego: la pala avanza de la preparación al contacto al llegar la bola
   AI_ARRIVE_T: 0.25, // s de juego: la IA termina de colocarse con suavidad antes de golpear
-  GESTURE_MAX_DEG: 7,
   ELEV_ERR_DEG: 7,
   YAW_ERR_DEG: 9,
   SPEED_ERR: 0.15,
@@ -111,6 +114,7 @@ export const CONFIG = {
   WHIFF_OFFSET: 1.35, // trazo más lejos que esto (en radios) no toca la bola
   MIN_SWIPE_PX_FRAC: 0.06, // longitud mínima del trazo (fracción del ancho)
   SIDE_CAM_DIST: 4.5,
+  IMPACT_HOLD: 0.3, // s con la vista lateral tras golpear (se ve salir la bola)
   IMPACT_BALL_SCALE: 6, // la bola se ve mucho más grande durante el impacto
   // Flecha de dirección y fuerza
   ARROW_MIN_LEN: 1.2, // m con fuerza 0

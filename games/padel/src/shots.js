@@ -47,7 +47,9 @@ export function buildShot({ p, side, yaw, power, family, stroke, q = 1, dev = 0,
   let spin = clamp(stroke.spin * f.spinScale, -1, 1);
   if (f.spinMin) spin = Math.sign(f.spinMin) * Math.max(Math.abs(spin), Math.abs(f.spinMin));
   const sideSpin = (f.sideSpin || 0) * -side;
-  const speed = lerp(f.speed[0], f.speed[1], power) * (1 + statPower) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR);
+  // Un roce convierte parte del golpe en efecto en vez de velocidad
+  const graze = stroke.contact ? Math.abs(stroke.spin) * C.GRAZE_SPEED_LOSS : 0;
+  const speed = lerp(f.speed[0], f.speed[1], power) * (1 + statPower) * (1 - Math.abs(spin) * C.SPIN_SPEED_FACTOR) * (1 - graze);
   // Profundidad nominal (m desde la red en campo rival). En el remate, más fuerza = bote más cerca de la red.
   const depth = family === 'remate' ? lerp(f.depth[0], f.depth[1], power) : f.depth + (power - 0.5) * f.depthPower;
   // Punto objetivo: rumbo de la flecha hasta la línea de profundidad del campo rival
@@ -59,15 +61,32 @@ export function buildShot({ p, side, yaw, power, family, stroke, q = 1, dev = 0,
   const sol = solveShot(p, target, speed, spin, sideSpin, 0, f.branch);
   // Desviación del gesto respecto al nominal y error por mala ejecución
   const err = (1 - q) * (1 - statPrecision);
-  // Cuanto más tangencial (roce), menos manda la dirección del trazo y más el gesto nominal de la familia
-  const effAngle = lerp(stroke.angle, f.angle, clamp(stroke.tang ?? 0, 0, 1));
-  const gesture = clamp((effAngle - f.angle) * f.angleGain, -C.GESTURE_MAX_DEG, C.GESTURE_MAX_DEG);
-  // Punto de contacto: por debajo del centro la bola sale más alta, por encima más baja
-  const contactElev = -(stroke.contact?.y ?? 0) * C.CONTACT_ELEV_DEG;
-  const elevErr = (gesture + contactElev + (Math.random() * 2 - 1) * err * C.ELEV_ERR_DEG) * (Math.PI / 180);
+  const face = faceDelta(stroke, f);
+  const elevErr = (face + (Math.random() * 2 - 1) * err * C.ELEV_ERR_DEG) * (Math.PI / 180);
   const yawErr = dev + (Math.random() * 2 - 1) * err * C.YAW_ERR_DEG * (Math.PI / 180);
   const sp = Math.hypot(sol.v.x, sol.v.y, sol.v.z);
   const elev = Math.asin(clamp(sol.v.y / sp, -1, 1)) + elevErr;
   const yaw2 = Math.atan2(sol.v.x, sol.v.z) + yawErr;
-  return { v: launch(yaw2, elev, sp * (1 - err * C.SPEED_ERR)), spin, side: sideSpin, speed: sp, family, target };
+  return { v: launch(yaw2, elev, sp * (1 - err * C.SPEED_ERR)), spin, side: sideSpin, speed: sp, family, target, face };
+}
+
+/**
+ * Ángulo de salida "físico" en la vista lateral (grados, + hacia arriba): la bola sale casi perpendicular a la cara
+ * de la pala (del punto de contacto al centro), mezclada con la dirección del brazo (el trazo).
+ * Contacto por arriba = cara cerrada = sale hacia abajo; por abajo = cara abierta = sale hacia arriba.
+ */
+export function faceAngle(stroke) {
+  const c = stroke.contact;
+  const ql = Math.hypot(c.x, c.y);
+  const nx = ql > 0.05 ? -c.x / ql : 1, ny = ql > 0.05 ? -c.y / ql : 0;
+  const a = (stroke.angle * Math.PI) / 180;
+  const dx = C.FACE_W * nx + (1 - C.FACE_W) * Math.cos(a);
+  const dy = C.FACE_W * ny + (1 - C.FACE_W) * Math.sin(a);
+  return (Math.atan2(dy, dx) * 180) / Math.PI;
+}
+
+/** Cuánto sube o baja la salida respecto a la ejecución típica de la familia (grados). Sin trazo (IA): 0. */
+export function faceDelta(stroke, f) {
+  if (!stroke.contact) return 0;
+  return clamp((faceAngle(stroke) - f.launchRef) * C.FACE_GAIN, -C.FACE_MAX_DEG, C.FACE_MAX_DEG);
 }

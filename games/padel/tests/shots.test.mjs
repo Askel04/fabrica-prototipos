@@ -46,3 +46,42 @@ for (const fam of ['plano', 'liftado', 'cortado', 'globo']) {
     console.log(fam.padEnd(8), `${power * 100}%`.padEnd(5), JSON.stringify(res));
   }
 }
+
+// Punto de contacto → dirección de salida (cara de la pala): mismo trazo horizontal, contacto arriba / centro / abajo
+import { buildShot as build2, faceAngle } from '../src/shots.js';
+console.log('\nCara de la pala: trazo horizontal a distintas alturas de la bola (desde el fondo, 60 %, calidad 1)');
+const angs = [];
+for (const [lbl, dy] of [['arriba', -25], ['centro', 0], ['abajo', 25]]) {
+  const st = analyzeStroke({ x: 100, y: 400 + dy }, { x: 300, y: 400 + dy }, c, r, 1);
+  const fam = classify({ h: 0.9, bounced: true, vyIn: -1, speedIn: 10, dNet: 8 }, st);
+  const res = {};
+  let elev = 0;
+  for (let i = 0; i < 20; i++) {
+    const P = { x: 1, y: 0.9, z: 8.5 };
+    const sh = build2({ p: P, side: 1, yaw: Math.PI, power: 0.6, family: fam, stroke: st, q: 1 });
+    elev += (Math.asin(sh.v.y / Math.hypot(sh.v.x, sh.v.y, sh.v.z)) * 180) / Math.PI / 20;
+    const o = judge(simulate({ p: P, v: sh.v, spin: sh.spin, side: sh.side }), 1).reason;
+    res[o] = (res[o] || 0) + 1;
+  }
+  angs.push(elev);
+  console.log(lbl.padEnd(7), fam.padEnd(8), 'cara', faceAngle(st).toFixed(0) + '°', 'salida', elev.toFixed(1) + '°', JSON.stringify(res));
+}
+console.log(angs[0] < angs[1] && angs[1] < angs[2] ? 'ok: arriba sale más baja, abajo más alta' : 'FALLO: orden de salida');
+console.log('\nGolpes típicos de cada familia con su trazo (20 repeticiones)');
+const typical = {
+  liftado: [{ x: 140, y: 440 }, { x: 175, y: 320 }],
+  cortado: [{ x: 140, y: 360 }, { x: 175, y: 480 }],
+  globo: [{ x: 150, y: 480 }, { x: 260, y: 300 }],
+  plano: [{ x: 100, y: 400 }, { x: 300, y: 400 }],
+};
+for (const [name, [a, b]] of Object.entries(typical)) {
+  const st = analyzeStroke(a, b, c, r, 1);
+  const fam = classify({ h: 0.9, bounced: true, vyIn: -1, speedIn: 10, dNet: 8 }, st);
+  let ok = 0;
+  for (let i = 0; i < 20; i++) {
+    const P = { x: 1, y: 0.9, z: 8.5 };
+    const sh = build2({ p: P, side: 1, yaw: Math.PI + (Math.random() - 0.5) * 0.4, power: 0.6, family: fam, stroke: st, q: 1 });
+    if (judge(simulate({ p: P, v: sh.v, spin: sh.spin, side: sh.side }), 1).winner === 1) ok++;
+  }
+  console.log(name.padEnd(8), '->', fam.padEnd(8), 'cara', faceAngle(st).toFixed(0) + '°', `${ok * 5}% dentro`);
+}
