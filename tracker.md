@@ -2,6 +2,7 @@
 
 | Juego | Fase | Idea + giro | Resultado test | Notas |
 |---|---|---|---|---|
+| Fútbol círculos | Prototipo | Fútbol 3v3 de círculos con física tipo Haxball + giro: sensación de Haxball en táctil (joystick flotante + chute mantenido) contra IA | | Excepciones: horizontal y física propia. Pendiente test de sensaciones en móvil |
 | Unir números | Reserva | Unir números en cuadrícula sin repetir casillas + giro: la línea avanza sola como una serpiente, el dedo solo gira y hay que llenar la cuadrícula en orden antes de chocar | | Eval 22/30 — se entiende al instante y se hace en 1 día, pero tal cual es un clon de Zip/Flow (riesgo 4.3) |
 | Pesca | Reserva | Pesca con peces variados y mejoras + giro: al subir, el sedal se corta si rozas un pez peligroso (cada lance es una esquiva) | | Eval 21/30 — modelo probado (Tiny Fishing), pero clon puro y la diversión depende de la meta |
 | Motores | Reserva | Reparar motores con piezas + giro: puzle de flujo 5x7 con tres circuitos (combustible, chispa, giro) que comparten casillas; sin "crea el tuyo" en el prototipo | | Eval 21/30 — encajar piezas no es puzle; el giro de flujos sí se valida por grafo; probar antes en papel |
