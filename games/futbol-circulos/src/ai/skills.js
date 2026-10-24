@@ -18,6 +18,11 @@ export function rand(k) {
   return (Math.random() * 2 - 1) * k;
 }
 
+// ruido gaussiano (σ)
+export function gauss(sigma) {
+  return Math.sqrt(-2 * Math.log(Math.random() + 1e-12)) * Math.cos(2 * Math.PI * Math.random()) * sigma;
+}
+
 // distancia de un punto al segmento a-b
 export function segDist(px, py, ax, ay, bx, by) {
   const ex = bx - ax, ey = by - ay;
@@ -58,24 +63,6 @@ export function steer(p, tx, ty, speed = 1, arrive = C.AI_ARRIVE) {
   p.input.y = ey * m;
 }
 
-// posición del balón dentro de t ticks (sin paredes)
-export function predictBall(ball, t) {
-  const d = C.BALL_DAMPING;
-  const k = (d * (1 - Math.pow(d, t))) / (1 - d);
-  return clampField(ball.x + ball.vx * k, ball.y + ball.vy * k, C.BALL_RADIUS);
-}
-
-// primer punto de la trayectoria del balón al que llega el jugador
-export function intercept(p, ball, maxT = 120) {
-  for (let t = 0; t <= maxT; t += 3) {
-    const [x, y] = predictBall(ball, t);
-    const need = Math.max(0, Math.hypot(x - p.disc.x, y - p.disc.y) - CONTACT) / TOP_SPEED + 8;
-    if (need <= t) return { t, x, y };
-  }
-  const [x, y] = predictBall(ball, maxT);
-  return { t: maxT + Math.hypot(x - p.disc.x, y - p.disc.y) / TOP_SPEED, x, y };
-}
-
 // ángulo entre jugador→balón y balón→objetivo: 0 = ya está detrás, listo para chutar
 export function approachAngle(p, ball, tx, ty) {
   const [ax, ay] = norm(ball.x - p.disc.x, ball.y - p.disc.y);
@@ -104,7 +91,8 @@ export function clearNow(p, ball) {
 }
 
 // Llevar el balón hacia (tx, ty): rodearlo, colocarse detrás y empujar ('push') o chutar ('kick').
-export function ballTo(p, ball, tx, ty, { mode = 'push', aimErr = 0, kickAngle = 0.3, speed = 1 } = {}) {
+// patient: sin presión, termina de alinearse antes de chutar (más preciso).
+export function ballTo(p, ball, tx, ty, { mode = 'push', aimErr = 0, kickAngle = 0.3, speed = 1, patient = false } = {}) {
   const d = p.disc;
   const ang = Math.atan2(ty - ball.y, tx - ball.x) + aimErr;
   const nx = Math.cos(ang), ny = Math.sin(ang);
@@ -132,7 +120,26 @@ export function ballTo(p, ball, tx, ty, { mode = 'push', aimErr = 0, kickAngle =
     const s = edge < 6 && aligned > kickAngle ? speed * 0.4 : speed;
     p.input.x = ix * s;
     p.input.y = iy * s;
-    if (mode === 'kick' && aligned < kickAngle && edge <= C.KICK_DIST + 2) kick = true;
+    const tol = patient ? Math.min(kickAngle, 0.035) : kickAngle;
+    if (mode === 'kick' && aligned < tol && edge <= C.KICK_DIST + 2) kick = true;
   }
   p.input.kick = kick && p.kickArmed;
+}
+
+// Conducción por empuje: mantenerse justo detrás del balón en la dirección `p.dribDir`, que gira
+// como mucho `turnRate` rad por tick hacia la deseada, y a una velocidad apenas mayor que la del balón.
+export function dribble(p, ball, tx, ty, turnRate = 0.06) {
+  const [wx, wy] = norm(tx - ball.x, ty - ball.y);
+  if (!p.dribDir) p.dribDir = [wx, wy];
+  let ang = Math.atan2(p.dribDir[1], p.dribDir[0]);
+  let diff = Math.atan2(wy, wx) - ang;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  ang += Math.max(-turnRate, Math.min(turnRate, diff));
+  p.dribDir = [Math.cos(ang), Math.sin(ang)];
+  const [dx, dy] = p.dribDir;
+  const ballAlong = ball.vx * dx + ball.vy * dy;
+  const meAlong = p.disc.vx * dx + p.disc.vy * dy;
+  // velocidad objetivo: un poco más que el balón; si me quedo atrás, acelero
+  const speed = Math.max(0.35, Math.min(1, 0.5 + (ballAlong + 0.6 - meAlong) * 0.8));
+  ballTo(p, ball, ball.x + dx * 80, ball.y + dy * 80, { mode: 'push', speed });
 }

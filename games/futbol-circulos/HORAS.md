@@ -11,4 +11,6 @@
 | 2026-10-24 | Artefacto para abrir desde Claude | 0.25 |
 | 2026-10-24 | IA nueva: investigación (EA FC, Steel Circus, RoboCup, RLGym), cerebro único por utilidad, simulación sin Phaser | 2.5 |
 | 2026-10-24 | Entrenamiento por autojuego, escenarios de prueba y calibrado de niveles con Elo | 1.5 |
-| | **Total** | **8.75** |
+| 2026-10-25 | IA por capas según el informe: percepción, roles, desmarque, portero líbero, tabla por θ | 2.5 |
+| 2026-10-25 | Ablaciones y calibrado de niveles (Elo), escenarios nuevos, depuración visual | 2 |
+| | **Total** | **13.25** |

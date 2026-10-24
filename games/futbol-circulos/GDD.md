@@ -12,12 +12,13 @@
 
 **Controles (menú de pausa, arriba a la izquierda):** Joystick `Móvil` (aparece donde pones el pulgar) o `Fijo` (esquina inferior izquierda); Tiro `Tocar` (mantener en la mitad derecha) o `Botón` (botón gris abajo a la derecha). Se guardan en localStorage.
 
-**IA (un solo cerebro, `src/ai/brain.js`; la dificultad son diales en `CONFIG.AI_LEVELS`, como en EA FC):**
-- Máquina de 4 estados (tengo el balón / compañero / rival / suelto). Decide por utilidad = prob. de éxito × valor (mapa de amenaza tipo xT y "carrera" de pase: ¿llega antes el receptor o un rival?), con softmax.
-- Posicionamiento: posición base según el balón + muestreo de huecos con línea de pase. Paredes: tras pasar corre al espacio y se la devuelven. Presión que tapa el pase, cobertura y portero que sale a los balones divididos.
-- Pesos entrenados por autojuego (`tools/train.mjs`, estrategia evolutiva contra versiones anteriores). Calibrado con `tools/ladder.mjs` (Elo) y comportamientos con `tools/scenarios.mjs`.
-- Diales por nivel: reacción, ruido de percepción, temperatura de decisión, puntería, opciones de ataque (pase al espacio, pared, banda, dejada, amagos), presión/cobertura y salida del portero.
-- Tus compañeros usan siempre el perfil `mate` (buen nivel); la dificultad del menú cambia solo a los rivales. **Pedir pase:** pulsa tiro lejos del balón cuando lo tiene un compañero.
+**IA (según el informe "IA de CPU en juegos deportivos"):** IA clásica por capas, como GRF/FIFA/2K:
+- Percepción con retardo (balón y rivales) y ruido → estado de equipo con histéresis (posesión clara / sin posesión / suelto) → roles por tiempo de intercepción (presionador, cobertura, apoyos, portero) → steering.
+- Con balón: utilidad (tiro al mayor hueco angular, pases al pie/al espacio/a la banda con seguridad por tiempos, conducción hacia el espacio que controla, despeje) + softmax con temperatura y tiempo mínimo de compromiso. Rasgos de personalidad (tirador, pasador, regateador).
+- Sin balón: puntos de apoyo puntuados (Buckland + control de espacio de Spearman) con asignación voraz e histéresis; paredes; pedir pase pulsando tiro lejos del balón.
+- Portero: punto que tapa el ángulo en la bisectriz (algo retrasado), sale si gana la carrera al balón dentro de su zona, achica en el 1v1, vuelve con prioridad y un defensa cubre la portería mientras tanto. En ataque es **líbero**: sube con su equipo (más cuanto más lejos esté el balón, siempre por detrás del último rival).
+- Dificultad = un único θ (`CONFIG.AI_LEVELS`) que interpola la tabla de `src/ai/params.js`: reacción, frecuencia de decisión, ruido, horizonte de predicción, puntería, alineación, temperatura, margen de pase, muestras de desmarque, presión, salida del portero, jugadas que conoce y adaptación. Misma física para todos. Fácil θ 0,15 · Normal 0,4 · Difícil 1 · compañeros 0,8.
+- Herramientas: `tools/ladder.mjs` (liga + tabla de estilo), `tools/scenarios.mjs` (portero, pase pedido, paredes, presión, precisión de chute, vuelta del portero), `tools/play.mjs`, `tools/train.mjs`. `?debug` en la URL dibuja la bisectriz y zona del portero, los roles y el mapa de calor de desmarques.
 
 **Paleta (boceto, se cambiará en el pulido):** verde campo `#718c5a`, líneas `#c7e6bd`, rojo `#e56e56`, azul `#5689e5`, bordes negro `#000000`, balón blanco `#ffffff`.
 

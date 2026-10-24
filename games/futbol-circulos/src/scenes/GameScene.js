@@ -60,6 +60,13 @@ export class GameScene extends Phaser.Scene {
     }
     this.updateScore();
 
+    if (this.debug) {
+      // capa de depuración de la IA rival: portero, roles y mapa de calor de desmarques
+      this.dbgGfx = this.add.graphics().setDepth(8);
+      this.dbgTexts = this.players.map(() => this.add.text(0, 0, '', {
+        fontFamily: 'monospace', fontSize: '10px', color: '#ffffff', stroke: '#000000', strokeThickness: 3,
+      }).setOrigin(0.5, 1).setDepth(30));
+    }
     this.createPauseButton();
     this.controls = new TouchControls(this, (p) => this.inPauseButton(p));
     this.applySettings();
@@ -211,6 +218,38 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: this.scoreText, scale: { from: 1.5, to: 1 }, duration: 300, ease: 'Back.Out' });
   }
 
+  drawDebug() {
+    const g = this.dbgGfx;
+    g.clear();
+    const brain = this.match.brains.blue;
+    if (!brain.P || !brain.ball) return;
+    // mapa de calor de los puntos de apoyo evaluados (verde = mejor)
+    const spots = brain.debugSpots;
+    if (spots && spots.length) {
+      const ss = spots.map((c) => c.s);
+      const lo = Math.min(...ss), hi = Math.max(...ss);
+      for (const c of spots) {
+        const t = (c.s - lo) / Math.max(1e-6, hi - lo);
+        g.fillStyle(Phaser.Display.Color.GetColor(255 * (1 - t), 255 * t, 40), 0.55);
+        g.fillCircle(c.x, c.y, 5);
+      }
+    }
+    // portero: zona de salida, bisectriz y punto K
+    const ogx = -brain.attack * C.FIELD_W;
+    g.lineStyle(1, 0x00ffff, 0.6);
+    g.strokeCircle(ogx, 0, brain.P.gkSweep);
+    const K = brain.keeperSpot(brain.ball);
+    g.lineStyle(1, 0xffff00, 0.8);
+    g.lineBetween(brain.ball.x, brain.ball.y, K.x, K.y);
+    g.fillStyle(0xffff00, 1);
+    g.fillCircle(K.x, K.y, 4);
+    // rol de cada jugador IA
+    this.players.forEach((p, i) => {
+      const t = this.dbgTexts[i];
+      t.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 2).setText(p.human ? 'tú' : p.job || '');
+    });
+  }
+
   updateScore() {
     this.scoreText.setText(`ROJO ${this.score.red} - ${this.score.blue} AZUL`);
   }
@@ -222,6 +261,7 @@ export class GameScene extends Phaser.Scene {
     const h = this.human;
     h.ring.setPosition(h.gfx.x, h.gfx.y).setAlpha(h.input.kick ? C.RING_ALPHA_KICK : C.RING_ALPHA_IDLE);
     this.controls.draw();
+    if (this.dbgGfx) this.drawDebug();
     if (this.fpsText) {
       const b = this.ball;
       this.fpsText.setText(`FPS ${this.game.loop.actualFps.toFixed(0)}  v ${Math.hypot(b.vx, b.vy).toFixed(2)}  ${this.match.state}`);

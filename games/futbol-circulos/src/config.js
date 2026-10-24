@@ -1,20 +1,5 @@
 // Parámetros del juego: tamaños, velocidades, dificultad.
 // Unidades = las del formato de estadios de Haxball (estadio "Classic").
-// Diales comunes a todos los niveles de IA (cada nivel sobrescribe lo que cambia).
-const AI_BASE = {
-  kickAngle: 0.12, // alineación (rad) para chutar o pasar
-  possessEdge: 12, // distancia borde-balón para considerar que alguien lo tiene
-  contestDist: 12, // rival a esta distancia del balón = balón disputado
-  dangerDist: 115, // cerca de la propia portería: pase seguro o despeje
-  shootRange: 330,
-  softPass: 130, // pases más cortos que esto van con empujón, no con chute
-  holdTicks: 80, // puede conducir ~1,3 s si no le presionan
-  decideTicks: 14, // cada cuánto replantea la conducción
-  dribbleSpeed: 0.85,
-  requestBonus: 2, // extra a pasar al humano cuando pide el balón
-  anchorX: 90, // el portero se adelanta hasta aquí cuando su equipo ataca
-};
-
 export const CONFIG = {
   WIDTH: 860,
   HEIGHT: 440,
@@ -72,41 +57,13 @@ export const CONFIG = {
 
   // IA: un solo cerebro (src/ai/brain.js); cada nivel son diales, como en los juegos de EA.
   AI_ARRIVE: 30, // distancia a la que la IA empieza a frenar al llegar a un punto
+  // Dificultad = un único θ ∈ [0, 1] que interpola todos los diales (src/ai/params.js).
   // La dificultad del menú cambia a los rivales; tus compañeros usan siempre el perfil 'mate'.
   AI_LEVELS: {
-    easy: {
-      ...AI_BASE,
-      reactionMs: 250, thinkMs: 120, noise: 16, temperature: 0.4, aim: 0.13, // reacción, ruido, decisiones, puntería
-      shotAngle: 0.2, oppReact: 10,
-      through: false, wallPass: false, oneTwo: false, drop: false, fakes: false, // inteligencia en ataque
-      pressSpeed: 0.8, coverSpeed: 0.85, shade: 0, standOff: 24, bodyBlock: false, laneCut: false, shift: false, pinch: 0.25, // en defensa
-      sweepRange: 110, keeperDare: -6, keeperOut: 0.1, keeperMaxOut: 30, keeperRush: 70, // portero
-    },
-    normal: {
-      ...AI_BASE,
-      reactionMs: 160, thinkMs: 90, noise: 8, temperature: 0.2, aim: 0.08,
-      shotAngle: 0.14, oppReact: 7,
-      through: true, wallPass: false, oneTwo: true, drop: false, fakes: false,
-      pressSpeed: 1, coverSpeed: 1, shade: 0.3, standOff: 40, bodyBlock: false, laneCut: false, shift: true, pinch: 0.45,
-      sweepRange: 170, keeperDare: 2, keeperOut: 0.18, keeperMaxOut: 60, keeperRush: 110,
-    },
-    hard: {
-      ...AI_BASE,
-      reactionMs: 60, thinkMs: 40, noise: 1.5, temperature: 0.04, aim: 0.03,
-      shotAngle: 0.1, oppReact: 5,
-      through: true, wallPass: true, oneTwo: true, drop: true, fakes: true,
-      pressSpeed: 1, coverSpeed: 1, shade: 0.45, standOff: 36, bodyBlock: true, laneCut: true, shift: true, pinch: 0.8,
-      sweepRange: 220, keeperDare: 4, keeperOut: 0.24, keeperMaxOut: 85, keeperRush: 140,
-    },
-    // compañeros del humano: buen nivel y muy pendientes de jugar contigo
-    mate: {
-      ...AI_BASE,
-      reactionMs: 70, thinkMs: 50, noise: 2, temperature: 0.06, aim: 0.035,
-      shotAngle: 0.12, oppReact: 6,
-      through: true, wallPass: true, oneTwo: true, drop: true, fakes: false,
-      pressSpeed: 1, coverSpeed: 1, shade: 0.4, standOff: 38, bodyBlock: true, laneCut: true, shift: true, pinch: 0.6,
-      sweepRange: 200, keeperDare: 3, keeperOut: 0.22, keeperMaxOut: 75, keeperRush: 130,
-    },
+    easy: { theta: 0.15 },
+    normal: { theta: 0.4 },
+    hard: { theta: 1 },
+    mate: { theta: 0.8 },
   },
 
   // Reglas

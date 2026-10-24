@@ -1,90 +1,162 @@
-// Evaluación del juego (las "utilidades"): amenaza de cada zona, trayectoria del balón
-// y carrera de pase/tiro (¿llega antes el receptor o un rival?).
+// Evaluación del juego: predicción del balón (como el motor), tiempos de intercepción,
+// seguridad de pase por tiempos de llegada, hueco angular a puerta y amenaza de cada zona.
 import { CONFIG as C } from '../config.js';
-import { CONTACT, TOP_SPEED, norm, segDist } from './skills.js';
+import { CONTACT, norm, segDist } from './skills.js';
 
 const W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
+const RB = C.BALL_RADIUS;
 export const KICK_SPEED = C.KICK_STRENGTH * C.BALL_INV_MASS;
 export const PUSH_SPEED = 2.2; // velocidad típica del balón tras un empujón en carrera
 
-// Amenaza (tipo xT): 0..1 según distancia y ángulo a la portería que se ataca.
-export function threat(x, y, attack) {
-  const gx = attack * W;
-  const d = Math.hypot(gx - x, y);
-  const centred = 1 - 0.5 * Math.min(1, Math.abs(y) / H);
-  return Math.exp(-d / 230) * centred;
+// Distancia que recorre un jugador partiendo de parado en t ticks (integra igual que el motor).
+const REACH = [0];
+{
+  let v = 0, d = 0;
+  for (let t = 1; t <= 240; t++) {
+    v = (v + C.PLAYER_ACCEL) * C.PLAYER_DAMPING;
+    d += v;
+    REACH.push(d);
+  }
+}
+const DP = C.PLAYER_DAMPING;
+const COAST = REACH.map((_, i) => (DP * (1 - DP ** i)) / (1 - DP)); // lo que aporta la velocidad inicial
+// distancia alcanzable en t ticks con velocidad inicial v0 hacia el objetivo
+export function reach(t, v0 = 0) {
+  const i = Math.min(240, Math.max(0, Math.round(t)));
+  return REACH[i] + Math.max(0, v0) * COAST[i];
 }
 
-// Trayectoria del balón lanzado desde (x, y) hacia (tx, ty) a cierta velocidad.
-// Rebota en las bandas y en el fondo (salvo la boca de gol). Devuelve puntos cada 2 ticks.
-export function ballPath(x, y, tx, ty, speed, maxT = 90) {
-  let [vx, vy] = norm(tx - x, ty - y);
-  vx *= speed;
-  vy *= speed;
-  const r = C.BALL_RADIUS;
+// ticks que tarda un jugador en tocar un punto (borde con borde)
+export function timeToReach(p, x, y) {
+  const d = p.disc;
+  const [ux, uy, l] = norm(x - d.x, y - d.y);
+  const need = Math.max(0, l - CONTACT);
+  if (need === 0) return 0;
+  const v0 = d.vx * ux + d.vy * uy;
+  const v = Math.max(0, v0);
+  let lo = 0, hi = 240;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (REACH[mid] + v * COAST[mid] >= need) hi = mid; else lo = mid;
+  }
+  return hi;
+}
+
+// Trayectoria del balón tick a tick: damping, rebotes en bandas y fondo, boca de gol abierta.
+export function trajectory(x, y, vx, vy, maxT = 120) {
   const e = C.BALL_BCOEF * C.WALL_BCOEF;
-  const pts = [];
-  let goal = 0;
+  const pts = [{ t: 0, x, y, goal: 0 }];
   for (let t = 1; t <= maxT; t++) {
     vx *= C.BALL_DAMPING;
     vy *= C.BALL_DAMPING;
     x += vx;
     y += vy;
-    if (y < -H + r) { y = -H + r; vy = -vy * e; }
-    if (y > H - r) { y = H - r; vy = -vy * e; }
-    if (Math.abs(x) > W - r) {
-      if (Math.abs(y) < G) { goal = Math.sign(x); pts.push({ t, x, y, goal }); break; }
-      x = Math.sign(x) * (W - r);
+    if (y < -H + RB) { y = -H + RB; vy = -vy * e; }
+    if (y > H - RB) { y = H - RB; vy = -vy * e; }
+    if (Math.abs(x) > W - RB) {
+      if (Math.abs(y) < G) { pts.push({ t, x, y, goal: Math.sign(x) }); break; }
+      x = Math.sign(x) * (W - RB);
       vx = -vx * e;
     }
-    if (t % 2 === 0) pts.push({ t, x, y, goal: 0 });
-    if (vx * vx + vy * vy < 0.05) break;
+    pts.push({ t, x, y, goal: 0 });
+    if (vx * vx + vy * vy < 0.02) break;
   }
   return pts;
 }
 
-// ticks que tarda un jugador en tocar un punto (con un pequeño retardo de reacción)
-export function reachTime(p, x, y, react = 6) {
-  const d = Math.max(0, Math.hypot(x - p.disc.x, y - p.disc.y) - CONTACT);
-  return d / TOP_SPEED + react;
+// trayectoria de un balón lanzado desde (x, y) hacia (tx, ty)
+export function shotPath(x, y, tx, ty, speed, maxT = 120) {
+  const [ux, uy] = norm(tx - x, ty - y);
+  return trajectory(x, y, ux * speed, uy * speed, maxT);
+}
+
+// Tiempo de intercepción dentro del horizonte de predicción. Más allá del horizonte la IA
+// "no lo ve venir": va a donde está el balón ahora (es lo que hace llegar tarde a los niveles bajos).
+export function intercept(p, path, horizon) {
+  const last = Math.min(path.length - 1, horizon);
+  for (let i = 0; i <= last; i += 2) {
+    const pt = path[i];
+    if (timeToReach(p, pt.x, pt.y) <= pt.t) return { t: pt.t, x: pt.x, y: pt.y, seen: true };
+  }
+  const now = path[0];
+  const end = path[last];
+  return { t: Math.max(end.t, timeToReach(p, now.x, now.y)) + 10, x: now.x, y: now.y, seen: false };
 }
 
 const sigmoid = (z) => 1 / (1 + Math.exp(-z));
 
-// Carrera de pase: ¿quién toca antes el balón en su trayectoria, el receptor o un rival?
-export function passRace(path, receiver, opps, oppReact = 6) {
-  let tR = Infinity, at = null, tO = Infinity;
-  for (const pt of path) {
-    if (tR === Infinity && reachTime(receiver, pt.x, pt.y, 4) <= pt.t) {
-      tR = pt.t;
-      at = pt;
-    }
-    if (tO === Infinity) {
-      for (const o of opps) if (reachTime(o, pt.x, pt.y, oppReact) <= pt.t) { tO = pt.t; break; }
-    }
-    if (tR !== Infinity) break;
+// Seguridad de un pase (0..1): para cada rival, ¿llega a algún punto de la trayectoria antes que
+// el balón llegue al receptor (más el margen de seguridad)? Devuelve también dónde recibe.
+export function passSafety(path, receiver, opps, marginTicks) {
+  let tR = Infinity, at = null;
+  for (let i = 2; i < path.length; i += 2) {
+    const pt = path[i];
+    if (timeToReach(receiver, pt.x, pt.y) <= pt.t) { tR = pt.t; at = pt; break; }
   }
-  if (!at) at = path[path.length - 1] || { x: receiver.disc.x, y: receiver.disc.y, t: 90 };
-  const margin = Math.min(tO, 120) - Math.min(tR, 120);
-  return { p: tR === Infinity ? 0.05 : sigmoid(margin / 5), x: at.x, y: at.y, t: tR };
-}
-
-// Tiro: probabilidad de que el balón cruce la línea de gol antes de que un rival lo toque.
-export function shotChance(path, opps, attack) {
-  const end = path[path.length - 1];
-  if (!end || end.goal !== attack) return 0;
+  if (!at) {
+    at = path[path.length - 1];
+    tR = Math.max(at.t, timeToReach(receiver, at.x, at.y));
+  }
   let tO = Infinity;
-  for (const pt of path) {
-    for (const o of opps) if (reachTime(o, pt.x, pt.y, 3) <= pt.t) { tO = pt.t; break; }
+  for (let i = 2; i < path.length && path[i].t <= tR; i += 2) {
+    const pt = path[i];
+    for (const o of opps) if (timeToReach(o, pt.x, pt.y) <= pt.t) { tO = pt.t; break; }
     if (tO !== Infinity) break;
   }
-  return tO === Infinity ? 0.95 : sigmoid((tO - end.t) / 4);
+  const p = tO === Infinity ? 0.97 : sigmoid((tO - tR - marginTicks) / 4);
+  return { p, x: at.x, y: at.y, t: tR };
+}
+
+// Hueco angular a puerta (como ShootToGoal de RoboCup SSL): se muestrean puntos entre postes,
+// se marcan los libres (ningún rival llega a la trayectoria antes de que cruce la línea) y se
+// apunta al centro del rango libre más ancho, lo más lejos posible del portero.
+export function bestShot(ball, opps, attack, n = 9) {
+  const gx = attack * (W + 4);
+  const lo = -G + RB + 2, hi = G - RB - 2;
+  const free = [];
+  for (let i = 0; i < n; i++) {
+    const gy = lo + ((hi - lo) * i) / (n - 1);
+    const path = shotPath(ball.x, ball.y, gx, gy, KICK_SPEED);
+    const end = path[path.length - 1];
+    let ok = end.goal === attack;
+    if (ok) {
+      for (let k = 2; k < path.length && ok; k += 2) {
+        for (const o of opps) if (timeToReach(o, path[k].x, path[k].y) <= path[k].t) { ok = false; break; }
+      }
+    }
+    free.push({ gy, ok });
+  }
+  let best = null, cur = null;
+  for (const f of free) {
+    if (f.ok) {
+      cur = cur || { from: f.gy, to: f.gy, count: 0 };
+      cur.to = f.gy;
+      cur.count++;
+    }
+    if ((!f.ok || f === free[free.length - 1]) && cur) {
+      if (!best || cur.count > best.count) best = cur;
+      cur = null;
+    }
+  }
+  const dist = Math.hypot(gx - ball.x, ball.y);
+  if (!best) return { quality: 0, x: gx, y: 0, dist };
+  const width = best.count / n;
+  // menos calidad desde lejos (el portero tiene tiempo) y desde ángulos cerrados
+  const quality = width * Math.exp(-Math.max(0, dist - 120) / 220);
+  return { quality, x: gx, y: (best.from + best.to) / 2, dist };
+}
+
+// Amenaza (tipo xT): 0..1 según distancia y ángulo a la portería que se ataca.
+export function threat(x, y, attack) {
+  const d = Math.hypot(attack * W - x, y);
+  const centred = 1 - 0.5 * Math.min(1, Math.abs(y) / H);
+  return Math.exp(-d / 230) * centred;
 }
 
 // Probabilidad rápida de que un pase a (x, y) llegue (línea libre de rivales y distancia razonable).
 export function laneProb(bx, by, x, y, opps) {
   let clear = Infinity;
-  for (const o of opps) clear = Math.min(clear, segDist(o.disc.x, o.disc.y, bx, by, x, y) - o.disc.r - C.BALL_RADIUS);
+  for (const o of opps) clear = Math.min(clear, segDist(o.disc.x, o.disc.y, bx, by, x, y) - o.disc.r - RB);
   const d = Math.hypot(x - bx, y - by);
   return sigmoid((clear - 6) / 6) * (d < 280 ? 1 : 0.6);
 }

@@ -42,8 +42,8 @@ export class Match {
     this.events = {}; // kick(p), goal(scorer), post(), passRequest()
     this.score = { red: 0, blue: 0 };
     this.stats = {
-      red: { passes: 0, shots: 0, lost: 0, ownGoals: 0 },
-      blue: { passes: 0, shots: 0, lost: 0, ownGoals: 0 },
+      red: { passes: 0, shots: 0, lost: 0, ownGoals: 0, sweeps: 0, gkAtk: 0, gkAtkN: 0, steals: 0 },
+      blue: { passes: 0, shots: 0, lost: 0, ownGoals: 0, sweeps: 0, gkAtk: 0, gkAtkN: 0, steals: 0 },
     };
     this.tick = 0;
     this.ballHistory = [];
@@ -94,8 +94,12 @@ export class Match {
   step() {
     this.tick++;
     const ball = this.ball;
-    this.ballHistory.push({ x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
-    if (this.ballHistory.length > 40) this.ballHistory.shift();
+    // historial de instantáneas (balón y jugadores) para la percepción con retardo de la IA
+    this.ballHistory.push({
+      ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy },
+      discs: this.players.map((p) => ({ x: p.disc.x, y: p.disc.y, vx: p.disc.vx, vy: p.disc.vy })),
+    });
+    if (this.ballHistory.length > 30) this.ballHistory.shift();
 
     if (this.human) this.readHuman();
     for (const team of ['red', 'blue']) this.brains[team].update(this.levels[team]);
@@ -119,6 +123,7 @@ export class Match {
           p.kickArmed = false;
           p.lastKick = this.tick;
           this.touch(p);
+          this.brains[p.team === 'red' ? 'blue' : 'red'].onOppKick(p, ball);
           this.events.kick?.(p);
         }
       }
@@ -162,7 +167,10 @@ export class Match {
       if (prev.team === p.team) {
         this.stats[p.team].passes++;
         this.brains[p.team].onReceive(prev, p);
-      } else this.stats[prev.team].lost++;
+      } else {
+        this.stats[prev.team].lost++;
+        this.stats[p.team].steals++;
+      }
     }
     this.lastTouch = p;
   }
@@ -195,9 +203,16 @@ export class Match {
     this.events.goal?.(scorer);
   }
 
-  // balón que "ve" una IA con su retardo de reacción
-  seenBall(reactionMs) {
+  // instantánea de hace `ticks` (la que percibe una IA con ese retardo)
+  snapshot(ticks) {
     const h = this.ballHistory;
-    return h[Math.max(0, h.length - 1 - ms2ticks(reactionMs))] || this.ball;
+    if (!h.length) {
+      const b = this.ball;
+      return {
+        ball: { x: b.x, y: b.y, vx: b.vx, vy: b.vy },
+        discs: this.players.map((p) => ({ x: p.disc.x, y: p.disc.y, vx: p.disc.vx, vy: p.disc.vy })),
+      };
+    }
+    return h[Math.max(0, h.length - 1 - ticks)];
   }
 }
