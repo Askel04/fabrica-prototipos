@@ -10,11 +10,18 @@
 
 **Meta:** ninguna en el prototipo. Posible: ligas contra IA de dificultad creciente, después online.
 
-**Paleta:** verde campo `#718c5a`, líneas `#c7e6bd`, rojo `#e56e56`, azul `#5689e5`, bordes negro `#000000`, balón blanco `#ffffff`.
+**Controles (menú de pausa, arriba a la izquierda):** Joystick `Móvil` (aparece donde pones el pulgar) o `Fijo` (esquina inferior izquierda); Tiro `Tocar` (mantener en la mitad derecha) o `Botón` (botón gris abajo a la derecha). Se guardan en localStorage.
+
+**Dificultad (rivales; tus compañeros juegan siempre en Normal, `TEAMMATE_LEVEL`):**
+- Fácil: IA original por roles (presiona, apoya, defiende), directa y desordenada.
+- Normal: conduce 1–2 s, busca huecos, pasa cuando la presionan, tiro con línea libre; en defensa uno presiona tapando el pase, otro marca o tapa el tiro y el portero sale a cortar y saca jugando. Comete errores.
+- Difícil: anchor/pivote/extremo, paredes 1-2, pases a la banda, amagos, dejadas al anchor, bloqueo con el cuerpo, pinchazos y basculación.
+
+**Paleta (boceto, se cambiará en el pulido):** verde campo `#718c5a`, líneas `#c7e6bd`, rojo `#e56e56`, azul `#5689e5`, bordes negro `#000000`, balón blanco `#ffffff`.
 
 **Qué hay que validar:** ¿se siente bien conducir y chutar con dos pulgares? ¿Se pide otra partida?
 
 ## Excepciones a CLAUDE.md
-- **Orientación HORIZONTAL** (no retrato 9:16). Escala FIT sobre lienzo 860x440.
+- **Orientación HORIZONTAL** (no retrato 9:16). Escala EXPAND (llena la pantalla) sobre base 860x440.
 - **Física propia** en `src/physics.js` (ni Arcade ni Matter): paso fijo 60 Hz con acumulador y subiteraciones de colisión. Phaser solo dibuja.
 - **Multitáctil** (joystick + chute a la vez), no un dedo.

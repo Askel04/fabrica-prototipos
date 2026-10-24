@@ -56,8 +56,6 @@ export const CONFIG = {
   PAUSE_BTN_MARGIN: 12,
 
   // IA
-  AI_REACTION_MS: 150, // retardo con el que la IA "ve" el balón
-  AI_THINK_MS: 100, // cada cuánto recalcula objetivos
   AI_ROLE_MS: 500, // cada cuánto reasigna roles
   AI_AIM_ERROR: 0.12, // radianes de error de puntería (±)
   AI_KICK_ANGLE: 0.35, // radianes de alineación para chutar
@@ -68,6 +66,48 @@ export const CONFIG = {
   AI_STALL_THINKS: 8, // pensamientos atascado antes de retroceder
   AI_BACKOFF_THINKS: 5,
   AI_SPEED: 1, // multiplicador de magnitud del input IA (≤1)
+  // Los valores AI_* de arriba son la IA Fácil. Normal y Difícil (src/ai/team.js):
+  // tiempos *Ticks a 60 Hz; distancias en unidades del campo.
+  // La dificultad del menú cambia a los rivales; tus compañeros juegan siempre a este nivel
+  // (null = el mismo que los rivales).
+  TEAMMATE_LEVEL: 'normal',
+  AI_LEVELS: {
+    easy: { thinkMs: 100, reactionMs: 150 }, // cada cuánto piensa y retardo con el que "ve" el balón
+    normal: {
+      thinkMs: 80, reactionMs: 120,
+      aim: 0.08, kickAngle: 0.3, shotAngle: 0.14, mistake: 0.12, // error de puntería y prob. de decisión mala
+      possessEdge: 10, // distancia borde-balón para considerar que se tiene el balón
+      shootRange: 340, shotLaneMargin: -6, // margen negativo: tira aunque la línea esté medio tapada
+      holdTicks: 70, maxHoldTicks: 150, decideTicks: 15, // conducir 1-2 s antes de pasar
+      pressureDist: 55, passLaneMargin: 6, passScoreMin: 40, softPassDist: 140,
+      wForward: 0.5, humanBonus: 15, oneTwoBonus: 0, alignCost: 30,
+      dribbleSpeed: 0.85,
+      keeperDist: 45, sweepRange: 170, anchorX: 70, // portero
+      shadow: 0.3, pinch: 0.35, // presión: cuánto tapa el pase y prob. de pinchazo
+      stallThinks: 12,
+      contestDist: 12, // rival a esta distancia del balón = disputado
+      dangerDist: 120, // cerca de la propia portería: despejar o pase seguro
+      roles: false, giveAndGo: false, wallPasses: false, fakeChance: 0, drop: false,
+      bodyBlock: false, laneCut: false, shift: false,
+    },
+    hard: {
+      thinkMs: 50, reactionMs: 70,
+      aim: 0.04, kickAngle: 0.25, shotAngle: 0.1, mistake: 0.05,
+      possessEdge: 10,
+      shootRange: 360, shotLaneMargin: -4,
+      holdTicks: 35, maxHoldTicks: 100, decideTicks: 12,
+      pressureDist: 60, passLaneMargin: 4, passScoreMin: 25, softPassDist: 120,
+      wForward: 0.6, humanBonus: 10, oneTwoBonus: 40, alignCost: 25,
+      dribbleSpeed: 0.85,
+      keeperDist: 60, sweepRange: 200, anchorX: 110,
+      shadow: 0.45, pinch: 0.8,
+      stallThinks: 15,
+      contestDist: 14,
+      dangerDist: 110,
+      roles: true, giveAndGo: true, wallPasses: true, fakeChance: 0.12, drop: true,
+      bodyBlock: true, laneCut: true, shift: true,
+    },
+  },
 
   // Reglas
   GOAL_PAUSE_MS: 1500,

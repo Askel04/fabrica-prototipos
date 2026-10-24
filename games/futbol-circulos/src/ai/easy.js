@@ -1,5 +1,5 @@
-// IA simple por roles: presiona, apoya, defiende.
-import { CONFIG as C } from './config.js';
+// IA Fácil: roles simples (presiona, apoya, defiende). Es la IA original del prototipo.
+import { CONFIG as C } from '../config.js';
 
 const len = (x, y) => Math.hypot(x, y) || 1;
 

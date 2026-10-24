@@ -3,7 +3,8 @@ import { CONFIG as C } from '../config.js';
 import { beep } from '../utils/sound.js';
 import { World, makeDisc } from '../physics.js';
 import { TouchControls } from '../input.js';
-import { assignRoles, think } from '../ai.js';
+import { assignRoles, think } from '../ai/easy.js';
+import { TeamBrain } from '../ai/team.js';
 import { settings } from '../settings.js';
 
 const DT_MS = 1000 / C.TICK_HZ;
@@ -41,6 +42,12 @@ export class GameScene extends Phaser.Scene {
         });
       }
     }
+    this.brains = {
+      red: new TeamBrain('red', this.players.filter((p) => p.team === 'red')),
+      blue: new TeamBrain('blue', this.players.filter((p) => p.team === 'blue')),
+    };
+    this.stats = { red: { passes: 0 }, blue: { passes: 0 } };
+    this.lastTouch = null;
     this.world.discs.push(...this.players.map((p) => p.disc), this.ball);
 
     this.score = { red: 0, blue: 0 };
@@ -196,6 +203,8 @@ export class GameScene extends Phaser.Scene {
       });
     }
     this.ballHistory.length = 0;
+    this.lastTouch = null;
+    for (const b of Object.values(this.brains)) b.reset();
   }
 
   // Durante el saque cada equipo queda en su mitad; el que no saca, fuera del círculo central.
@@ -232,24 +241,15 @@ export class GameScene extends Phaser.Scene {
     const ball = this.ball;
 
     // historial del balón para la reacción retardada de la IA
-    this.ballHistory.push({ x: ball.x, y: ball.y });
-    const delay = ms2ticks(C.AI_REACTION_MS);
-    if (this.ballHistory.length > delay + 1) this.ballHistory.shift();
-    const seen = this.ballHistory[0];
-
-    if (this.tick % ms2ticks(C.AI_ROLE_MS) === 0 || this.tick === 1) {
-      for (const team of ['red', 'blue']) assignRoles(this.players.filter((p) => p.team === team), seen);
-    }
-    const thinkNow = this.tick % ms2ticks(C.AI_THINK_MS) === 0;
+    this.ballHistory.push({ x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
+    if (this.ballHistory.length > 30) this.ballHistory.shift();
+    for (const team of ['red', 'blue']) this.teamThink(team);
 
     for (const p of this.players) {
       if (p.human) {
         p.input.x = this.controls.dirX;
         p.input.y = this.controls.dirY;
         p.input.kick = this.controls.kick;
-      } else if (thinkNow) {
-        if (Math.random() < 0.1) p.aimError = (Math.random() * 2 - 1) * C.AI_AIM_ERROR;
-        think(p, seen);
       }
       const d = p.disc;
       const kicking = p.input.kick;
@@ -267,12 +267,22 @@ export class GameScene extends Phaser.Scene {
           ball.vx += (dx / dist) * k;
           ball.vy += (dy / dist) * k;
           p.kickArmed = false;
+          p.lastKick = this.tick;
           this.onKick(p);
         }
       }
     }
 
     this.world.step();
+
+    // último en tocar el balón (para la IA) y pases completados (para afinar la IA)
+    for (const p of this.players) {
+      if (Math.hypot(ball.x - p.disc.x, ball.y - p.disc.y) - p.disc.r - ball.r < 0.5) {
+        const prev = this.lastTouch;
+        if (prev && prev !== p && prev.team === p.team) this.stats[p.team].passes++;
+        this.lastTouch = p;
+      }
+    }
 
     if (this.state === 'kickoff' && (ball.vx !== 0 || ball.vy !== 0)) {
       this.state = 'play';
@@ -284,6 +294,35 @@ export class GameScene extends Phaser.Scene {
     if (this.state === 'goal' && this.tick >= this.resetTick) {
       this.startKickoff(this.concededBy);
     }
+  }
+
+  // IA de un equipo según su dificultad (Fácil = IA original por roles)
+  teamThink(team) {
+    const mates = team === this.human.team && C.TEAMMATE_LEVEL;
+    const level = this.levelOverride?.[team] ?? (mates || this.difficulty);
+    const L = C.AI_LEVELS[level];
+    const hist = this.ballHistory;
+    const seen = hist[Math.max(0, hist.length - 1 - ms2ticks(L.reactionMs))];
+    const members = this.players.filter((p) => p.team === team);
+    if (level === 'easy') {
+      if (this.tick % ms2ticks(C.AI_ROLE_MS) === 0 || this.tick === 1) assignRoles(members, seen);
+      if (this.tick % ms2ticks(L.thinkMs) !== 0) return;
+      for (const p of members) {
+        if (p.human) continue;
+        if (Math.random() < 0.1) p.aimError = (Math.random() * 2 - 1) * C.AI_AIM_ERROR;
+        think(p, seen);
+      }
+      return;
+    }
+    if (this.tick % ms2ticks(L.thinkMs) !== 0) return;
+    const brain = this.brains[team];
+    brain.setLevel(level);
+    brain.think({ ball: seen, players: this.players, tick: this.tick, lastTouch: this.lastTouch });
+  }
+
+  // solo para pruebas: fija la dificultad de cada equipo (null = la del menú)
+  setTeamLevels(red, blue) {
+    this.levelOverride = red || blue ? { red, blue } : null;
   }
 
   onKick(p) {
