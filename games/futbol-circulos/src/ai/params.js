@@ -69,6 +69,7 @@ export function levelParams(theta) {
   P.bodyBlock = theta >= 0.7;
   P.pinch = 0.2 + 0.6 * theta; // prob. de "pinchar" el balón al tenerlo a tiro
   P.standOff = 22 + 16 * Math.min(1, theta / 0.6); // distancia de espera ante un portador que controla
+  P.zoneSpeed = 0.7 + 0.3 * theta; // 5v5: disciplina para volver a su puesto
   P.bunch = theta < 0.35; // nivel bajo: se amontonan yendo al balón
   P.adapt = theta >= 0.85; // adaptación al humano (estilo Teamvision)
   P.holdTicks = Math.round(30 + 50 * theta); // cuánto se permite conducir sin presión

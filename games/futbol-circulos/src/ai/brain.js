@@ -19,6 +19,7 @@ import TRAINED from './weights.js';
 import { fieldScale } from '../stadium.js';
 import { syncEvaluate } from './evaluate.js';
 import { syncSupport } from './support.js';
+import { slotPoint, assignSlots, DEFENDERS } from './formation.js';
 
 // medidas del campo actual (cambian con el estadio; Match llama a syncField al crear el partido)
 let W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
@@ -27,6 +28,7 @@ export function syncField() {
   syncEvaluate();
   syncSupport();
 }
+const SEPARATE = new Set(['support', 'support3', 'zone', 'shadow', 'press2', 'cover']);
 const ticks = (ms) => Math.max(1, Math.round((ms * C.TICK_HZ) / 1000));
 
 // Pesos de las utilidades (tools/train.mjs puede reajustarlos y guardarlos en weights.js).
@@ -164,6 +166,9 @@ export class TeamBrain {
     const { first, others, lasts } = this.assignRotation(ours ? this.owner : null, itOf);
     const second = others[0] || lasts[1] || lasts[0], third = lasts[0];
     this.rot = { first, second, third, others, lasts };
+    // equipos grandes (5v5): formación zonal en vez de que todos se cierren sobre el balón
+    if (this.players.length >= 4) return this.zonalThink(first, ours, phase, raw, itOf, tOpp, ais);
+    this.zKind = null;
 
     const jobs = new Map();
     if (ours) {
@@ -212,6 +217,114 @@ export class TeamBrain {
       m.stats[this.team].thirdDepthN++;
     }
     this.updateSpots();
+  }
+
+  // ---- 5v5: el 1.º va al balón; el resto ocupa los puestos de una formación que bascula ----
+  zonalThink(first, ours, phase, raw, itOf, tOpp, ais) {
+    const { P, m, ball } = this;
+    const a = this.attack;
+    const k = fieldScale();
+    const kind = ours ? 'attack' : phase === 'defend' && raw !== 'loose' && this.owner ? 'defend' : 'loose';
+    this.zKind = kind;
+    const rest = this.players.filter((p) => p !== first);
+    this.slotOf = assignSlots(rest, kind, ball, a, W, H, k, first, this.slotOf || new Map());
+    for (const p of this.players) p.slotName = this.slotOf.get(p) || null;
+
+    const jobs = new Map();
+    jobs.set(first, ours ? 'carry' : kind === 'defend' ? 'press' : 'chase');
+    for (const p of rest) jobs.set(p, ours ? (DEFENDERS.has(p.slotName) && p.slotName !== 'MC' ? 'support3' : 'support') : 'zone');
+    if (!ours) {
+      const near = (p) => Math.hypot(p.disc.x - ball.x, p.disc.y - ball.y);
+      const ais2 = rest.filter((p) => !p.human);
+      // el más retrasado tapa la portería (sombra) con el balón en nuestro campo, o sale si gana la carrera
+      const deepest = minBy(ais2.filter((p) => DEFENDERS.has(p.slotName)), (p) => p.disc.x * a);
+      if (deepest) {
+        const tIt = itOf.get(deepest);
+        const fromGoal = Math.hypot(tIt.x + a * W, tIt.y);
+        const sweeps = kind === 'loose' && tIt.seen && fromGoal < this.sweep() && tIt.t + P.sweepMarginTicks < tOpp && tIt.t < itOf.get(first).t;
+        if (sweeps) {
+          if (deepest.job !== 'chase') m.stats[this.team].sweeps++;
+          jobs.set(deepest, 'chase');
+        } else if (ball.x * a < -0.15 * W) jobs.set(deepest, 'shadow');
+      }
+      // segundo hombre al balón, solo si está cerca (Fácil: va casi siempre; Difícil: presión doble)
+      const second = minBy(ais2.filter((p) => jobs.get(p) === 'zone'), near);
+      if (second) {
+        if (kind === 'loose' && P.bunch && near(second) < 90 * k) jobs.set(second, 'chase');
+        else if (kind === 'defend' && P.doublePress && this.owner.disc.x * a > 0 && near(second) < 130 * k) jobs.set(second, 'press2');
+      }
+      // marcaje zonal: cada rival peligroso, al de la zona más cercana (sin repetir)
+      const zone = ais2.filter((p) => jobs.get(p) === 'zone');
+      for (const p of zone) p.zoneMark = null;
+      if (P.cover) {
+        const R = 120 * k;
+        const free = new Set(zone);
+        for (const o of this.dangerList()) {
+          const cand = minBy([...free], (p) => {
+            const [sx, sy] = this.slotPointOf(p);
+            const d = Math.hypot(o.disc.x - sx, o.disc.y - sy);
+            return d < R ? d : Infinity;
+          });
+          if (cand && free.has(cand)) {
+            const [sx, sy] = this.slotPointOf(cand);
+            if (Math.hypot(o.disc.x - sx, o.disc.y - sy) < R) { cand.zoneMark = o; free.delete(cand); }
+          }
+        }
+      }
+    }
+    for (const p of ais) {
+      const job = jobs.get(p) || 'zone';
+      if (job !== 'carry' && job !== 'chase') { p.carryStart = null; p.act = null; }
+      p.job = job;
+    }
+    this.updateSpots();
+  }
+
+  slotPointOf(p) {
+    return slotPoint(p.slotName || 'MC', this.zKind || 'loose', this.ball, this.attack, W, H, fieldScale());
+  }
+
+  // Puesto zonal sin balón: marcar por el lado de la portería al rival que entra en mi zona
+  // (cortando su línea de pase en niveles altos); si no hay, quedarme en mi punto de la formación.
+  zone(p) {
+    const { P, ball } = this;
+    const a = this.attack;
+    let [tx, ty] = this.slotPointOf(p);
+    const r = p.zoneMark;
+    if (r) {
+      const ogx = -a * W;
+      const [gx, gy] = norm(ogx - r.disc.x, -r.disc.y);
+      let mx = r.disc.x + gx * 30, my = r.disc.y + gy * 30;
+      if (P.laneCut) {
+        mx = mx * 0.5 + (ball.x + (r.disc.x - ball.x) * 0.7) * 0.5;
+        my = my * 0.5 + (ball.y + (r.disc.y - ball.y) * 0.7) * 0.5;
+      }
+      // sin salir demasiado de la zona: mezcla entre el puesto y la marca
+      const w = 0.35 + 0.25 * P.theta;
+      tx = tx * (1 - w) + mx * w;
+      ty = ty * (1 - w) + my * w;
+    }
+    [tx, ty] = clampField(tx, ty, 18);
+    steer(p, tx, ty, P.zoneSpeed);
+    this.pinch(p);
+  }
+
+  // Separación entre compañeros (5v5): un empujón suave para no pisarse ni hacer bola.
+  separate(p) {
+    let sx = 0, sy = 0;
+    const R = 70;
+    for (const q of this.players) {
+      if (q === p) continue;
+      const dx = p.disc.x - q.disc.x, dy = p.disc.y - q.disc.y;
+      const d = Math.hypot(dx, dy);
+      if (d < R && d > 0) { sx += (dx / d) * (1 - d / R); sy += (dy / d) * (1 - d / R); }
+    }
+    if (!sx && !sy) return;
+    let ix = p.input.x + sx * 0.7, iy = p.input.y + sy * 0.7;
+    const l = Math.hypot(ix, iy);
+    if (l > 1) { ix /= l; iy /= l; }
+    p.input.x = ix;
+    p.input.y = iy;
   }
 
   // Orden de la rotación. 1.º = el que llega antes al balón (o el poseedor). Último hombre = el más
@@ -282,6 +395,11 @@ export class TeamBrain {
 
   // ---------------- ejecución (cada tick) ----------------
   act(p) {
+    this.actJob(p);
+    if (this.zKind && SEPARATE.has(p.job)) this.separate(p);
+  }
+
+  actJob(p) {
     p.input.kick = false;
     switch (p.job) {
       case 'carry': return this.carry(p);
@@ -296,6 +414,7 @@ export class TeamBrain {
       case 'cover': return this.cover(p);
       case 'shadow': return this.shadow(p);
       case 'rotate': return this.rotateBack(p);
+      case 'zone': return this.zone(p);
       default: return steer(p, p.disc.x, p.disc.y, 0);
     }
   }

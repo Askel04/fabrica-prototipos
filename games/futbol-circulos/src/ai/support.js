@@ -72,6 +72,11 @@ export function scoreSpot(brain, p, x, y, ball, taken, cache = null) {
     brain.thirdMaxX = maxX;
     outside = Math.max(0, x * a - maxX) / 25;
   }
+  // 5v5: no salir de la zona de su puesto (así quedan líneas de pase abiertas a lo ancho)
+  if (p.slotName && brain.zKind) {
+    const [sx, sy] = brain.slotPointOf(p);
+    outside += Math.max(0, Math.hypot(x - sx, y - sy) - 110 * ks) / 40;
+  }
   const move = Math.hypot(x - p.disc.x, y - p.disc.y) / 300;
   return w.supPass * pass + w.supShot * shot + w.supDist * dist + w.supSpace * space +
     w.supAdv * progress - w.supMate * crowd - w.supRole * outside - w.supMove * move;
@@ -83,6 +88,11 @@ export function assignSpots(brain, supporters, ball) {
   const result = new Map();
   if (P.supportSamples === 0) {
     supporters.forEach((p, i) => {
+      if (p.slotName && brain.zKind) { // 5v5: su punto de la formación
+        const [x, y] = brain.slotPointOf(p);
+        result.set(p, { x, y, s: 0 });
+        return;
+      }
       const side = i % 2 === 0 ? -1 : 1;
       const third = p.job === 'support3';
       const x = third ? ball.x - a * 140 : ball.x - a * 50;

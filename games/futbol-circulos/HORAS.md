@@ -16,4 +16,5 @@
 | 2026-10-25 | Sin portero: rotación 1.º/2.º/3.º estilo Rocket League, calibrado y pruebas | 2 |
 | 2026-10-26 | Campo grande y modo 5v5 (IA para N jugadores, saques, zoom por estadio) | 1.5 |
 | 2026-10-26 | Menú principal y online por salas con código (anfitrión con autoridad, lobby, bots de relleno) | 2.5 |
-| | **Total** | **19.25** |
+| 2026-10-26 | IA 5v5: formación zonal que bascula, marcaje por zonas, métrica de espaciado y calibrado | 1.5 |
+| | **Total** | **20.75** |

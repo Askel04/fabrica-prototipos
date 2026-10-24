@@ -437,8 +437,19 @@ export class GameScene extends Phaser.Scene {
       const rot = this.match.brains[p.team].rot || {};
       const n = p === rot.first ? '1º' : p === rot.second ? '2º' : p === rot.third ? '3º' : '';
       const t = this.dbgTexts[i];
-      t.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 2).setText(p.human ? `tú ${n}` : `${n} ${p.job || ''}`);
+      const slot = p.slotName && this.match.brains[p.team].zKind ? `${p.slotName} ` : '';
+      t.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 2).setText(p.human ? `tú ${slot}${n}` : `${slot}${n} ${p.job || ''}`);
     });
+    // 5v5: punto de la formación de cada jugador del equipo azul
+    if (brain.zKind) {
+      g.lineStyle(1, 0xffffff, 0.5);
+      for (const p of brain.players) {
+        if (!p.slotName) continue;
+        const [sx, sy] = brain.slotPointOf(p);
+        g.strokeCircle(sx, sy, 6);
+        g.lineBetween(p.disc.x, p.disc.y, sx, sy);
+      }
+    }
   }
 
   updateScore() {
