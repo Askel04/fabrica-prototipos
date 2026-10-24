@@ -48,6 +48,12 @@ export const CONFIG = {
   JOY_RADIUS: 55, // recorrido máximo del joystick (unidades de juego)
   JOY_DEADZONE: 0.12, // fracción del radio
   JOY_FOLLOW: true, // la base sigue al pulgar si se pasa del radio
+  JOY_FIXED_MARGIN: 34, // margen del joystick fijo a la esquina inferior izquierda
+  KICK_BTN_RADIUS: 46, // botón de tiro (modo Botón)
+  KICK_BTN_MARGIN: 34,
+  KICK_BTN_SLOP: 12, // margen extra de acierto alrededor del botón
+  PAUSE_BTN_SIZE: 40,
+  PAUSE_BTN_MARGIN: 12,
 
   // IA
   AI_REACTION_MS: 150, // retardo con el que la IA "ve" el balón

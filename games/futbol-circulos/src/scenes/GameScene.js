@@ -4,6 +4,7 @@ import { beep } from '../utils/sound.js';
 import { World, makeDisc } from '../physics.js';
 import { TouchControls } from '../input.js';
 import { assignRoles, think } from '../ai.js';
+import { settings } from '../settings.js';
 
 const DT_MS = 1000 / C.TICK_HZ;
 const ms2ticks = (ms) => Math.max(1, Math.round(ms / DT_MS));
@@ -21,7 +22,6 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     this.debug = C.DEBUG || new URLSearchParams(location.search).has('debug');
-    this.cameras.main.setScroll(-C.WIDTH / 2, -C.HEIGHT / 2 - C.VIEW_OFFSET_Y);
 
     this.world = new World();
     this.ball = makeDisc(0, 0, C.BALL_RADIUS, C.BALL_INV_MASS, C.BALL_DAMPING, C.BALL_BCOEF);
@@ -66,23 +66,27 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    const top = -C.HEIGHT / 2 - C.VIEW_OFFSET_Y;
-    this.scoreText = this.add.text(0, top + 4, '', {
+    this.scoreText = this.add.text(0, 4, '', {
       fontFamily: 'sans-serif', fontSize: '22px', fontStyle: 'bold', color: '#ffffff',
       stroke: '#000000', strokeThickness: 4,
-    }).setOrigin(0.5, 0).setDepth(50);
+    }).setOrigin(0.5, 0).setDepth(50).setScrollFactor(0);
     this.goalText = this.add.text(0, -20, '¡GOL!', {
       fontFamily: 'sans-serif', fontSize: '64px', fontStyle: 'bold', color: '#ffffff',
       stroke: '#000000', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(60).setVisible(false);
     if (this.debug) {
-      this.fpsText = this.add.text(-C.WIDTH / 2 + 6, top + 4, '', {
+      this.fpsText = this.add.text(C.PAUSE_BTN_MARGIN * 2 + C.PAUSE_BTN_SIZE, 6, '', {
         fontFamily: 'monospace', fontSize: '14px', color: '#ffff00',
-      }).setDepth(50);
+      }).setDepth(50).setScrollFactor(0);
     }
     this.updateScore();
 
-    this.controls = new TouchControls(this);
+    this.createPauseButton();
+    this.controls = new TouchControls(this, (p) => this.inPauseButton(p));
+    this.applySettings();
+    this.events.on('resume', () => this.applySettings());
+    this.scale.on('resize', () => this.layout());
+    this.layout();
     this.input.once('pointerdown', () => {
       try {
         if (!this.scale.isFullscreen) this.scale.startFullscreen();
@@ -94,9 +98,57 @@ export class GameScene extends Phaser.Scene {
     window.__game = this; // para pruebas y depuración
   }
 
+  // Coloca cámara y HUD según el tamaño visible (EXPAND cambia el ancho/alto del lienzo).
+  layout() {
+    const { width } = this.scale.gameSize;
+    this.cameras.main.centerOn(0, -C.VIEW_OFFSET_Y);
+    this.scoreText.setX(width / 2);
+  }
+
+  applySettings() {
+    this.controls.setModes(settings.joystick, settings.kick);
+    this.difficulty = settings.difficulty;
+  }
+
+  createPauseButton() {
+    const s = C.PAUSE_BTN_SIZE, m = C.PAUSE_BTN_MARGIN;
+    const g = this.add.graphics().setScrollFactor(0).setDepth(120);
+    g.fillStyle(0xffffff, 0.85);
+    g.fillRoundedRect(m, m, s, s, 8);
+    g.lineStyle(3, 0x000000, 1);
+    g.strokeRoundedRect(m, m, s, s, 8);
+    for (let i = -1; i <= 1; i++) g.lineBetween(m + 10, m + s / 2 + i * 9, m + s - 10, m + s / 2 + i * 9);
+    this.pauseBtn = g;
+    this.pausePointer = null;
+    // se abre solo al pulsar Y soltar dentro del botón
+    this.input.on('pointerdown', (p) => {
+      if (this.inPauseButton(p)) this.pausePointer = p.id;
+    });
+    this.input.on('pointerup', (p) => {
+      if (p.id !== this.pausePointer) return;
+      this.pausePointer = null;
+      if (this.inPauseButton(p)) this.openMenu();
+    });
+  }
+
+  inPauseButton(p) {
+    const s = C.PAUSE_BTN_SIZE, m = C.PAUSE_BTN_MARGIN, pad = 6;
+    return p.x >= m - pad && p.x <= m + s + pad && p.y >= m - pad && p.y <= m + s + pad;
+  }
+
+  openMenu() {
+    this.controls.release();
+    this.scene.pause();
+    this.scene.launch('Menu');
+  }
+
   drawField() {
     const g = this.add.graphics().setDepth(0);
     const W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF, D = C.GOAL_DEPTH;
+    g.fillStyle(C.COLOR_FIELD, 1);
+    g.fillRect(-1500, -1000, 3000, 2000); // fondo de sobra para cualquier proporción de pantalla
+    g.fillStyle(0x000000, 0.12);
+    g.fillRect(-1500, -1000, 3000, 2000);
     g.fillStyle(C.COLOR_FIELD, 1);
     g.fillRect(-C.OUTER_W, -C.OUTER_H, C.OUTER_W * 2, C.OUTER_H * 2);
     // franjas de césped
