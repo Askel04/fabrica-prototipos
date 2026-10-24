@@ -1,20 +1,9 @@
 import Phaser from 'phaser';
 import { CONFIG as C } from '../config.js';
 import { beep } from '../utils/sound.js';
-import { World, makeDisc } from '../physics.js';
 import { TouchControls } from '../input.js';
-import { assignRoles, think } from '../ai/easy.js';
-import { TeamBrain } from '../ai/team.js';
 import { settings } from '../settings.js';
-
-const DT_MS = 1000 / C.TICK_HZ;
-const ms2ticks = (ms) => Math.max(1, Math.round(ms / DT_MS));
-
-// Posiciones de saque (x relativa a la propia portería: negativa = propia mitad)
-const KICKOFF_SPOTS = {
-  kicker: [[-40, 0], [-180, -90], [-180, 90]],
-  other: [[-140, 0], [-250, -70], [-250, 70]],
-};
+import { Match, DT_MS } from '../sim/match.js';
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -24,47 +13,30 @@ export class GameScene extends Phaser.Scene {
   create() {
     this.debug = C.DEBUG || new URLSearchParams(location.search).has('debug');
 
-    this.world = new World();
-    this.ball = makeDisc(0, 0, C.BALL_RADIUS, C.BALL_INV_MASS, C.BALL_DAMPING, C.BALL_BCOEF);
-    this.ball.isBall = true;
-
-    this.players = [];
-    for (const [team, attack, color] of [['red', 1, C.COLOR_RED], ['blue', -1, C.COLOR_BLUE]]) {
-      for (let i = 0; i < 3; i++) {
-        const disc = makeDisc(0, 0, C.PLAYER_RADIUS, C.PLAYER_INV_MASS, C.PLAYER_DAMPING, C.PLAYER_BCOEF);
-        this.players.push({
-          disc, team, attack, color,
-          human: team === 'red' && i === 0,
-          input: { x: 0, y: 0, kick: false },
-          kickArmed: true,
-          role: 'support',
-          aimError: 0,
-        });
-      }
-    }
-    this.brains = {
-      red: new TeamBrain('red', this.players.filter((p) => p.team === 'red')),
-      blue: new TeamBrain('blue', this.players.filter((p) => p.team === 'blue')),
-    };
-    this.stats = { red: { passes: 0 }, blue: { passes: 0 } };
-    this.lastTouch = null;
-    this.world.discs.push(...this.players.map((p) => p.disc), this.ball);
-
-    this.score = { red: 0, blue: 0 };
-    this.tick = 0;
+    // la simulación (física, reglas e IA) vive en Match; la escena solo dibuja y lee los controles
+    this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty } });
+    this.world = this.match.world;
+    this.ball = this.match.ball;
+    this.players = this.match.players;
+    this.score = this.match.score;
     this.acc = 0;
-    this.ballHistory = [];
     this.lastPostSound = 0;
-    this.world.onPostHit = () => {
-      if (this.tick - this.lastPostSound > 10 && Math.hypot(this.ball.vx, this.ball.vy) > 1.5) {
-        this.lastPostSound = this.tick;
-        beep(C.SOUND_POST, C.SOUND_DURATION * 2);
-      }
+    this.match.events = {
+      kick: (p) => this.onKick(p),
+      goal: (scorer) => this.onGoal(scorer),
+      post: () => {
+        if (this.match.tick - this.lastPostSound > 10 && Math.hypot(this.ball.vx, this.ball.vy) > 1.5) {
+          this.lastPostSound = this.match.tick;
+          beep(C.SOUND_POST, C.SOUND_DURATION * 2);
+        }
+      },
+      passRequest: () => this.onPassRequest(),
     };
 
     this.drawField();
     this.ballGfx = this.add.circle(0, 0, C.BALL_RADIUS, C.COLOR_BALL).setStrokeStyle(C.BORDER_WIDTH, C.COLOR_BORDER).setDepth(11);
     for (const p of this.players) {
+      p.color = p.team === 'red' ? C.COLOR_RED : C.COLOR_BLUE;
       p.gfx = this.add.circle(0, 0, C.PLAYER_RADIUS, p.color).setStrokeStyle(C.BORDER_WIDTH, C.COLOR_BORDER).setDepth(10);
       if (p.human) {
         this.human = p;
@@ -101,7 +73,6 @@ export class GameScene extends Phaser.Scene {
       } catch { /* sin pantalla completa */ }
     });
 
-    this.startKickoff('red');
     window.__game = this; // para pruebas y depuración
   }
 
@@ -115,6 +86,7 @@ export class GameScene extends Phaser.Scene {
   applySettings() {
     this.controls.setModes(settings.joystick, settings.kick);
     this.difficulty = settings.difficulty;
+    this.match.levels.blue = settings.difficulty;
   }
 
   createPauseButton() {
@@ -185,45 +157,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  startKickoff(kickingTeam) {
-    this.state = 'kickoff';
-    this.kickingTeam = kickingTeam;
-    Object.assign(this.ball, { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0 });
-    for (const team of ['red', 'blue']) {
-      const members = this.players.filter((p) => p.team === team);
-      // el humano va primero para ocupar el sitio del que saca
-      members.sort((a, b) => b.human - a.human);
-      const spots = KICKOFF_SPOTS[team === kickingTeam ? 'kicker' : 'other'];
-      members.forEach((p, i) => {
-        const [sx, sy] = spots[i];
-        const x = sx * p.attack, y = sy;
-        Object.assign(p.disc, { x, y, px: x, py: y, vx: 0, vy: 0 });
-        p.disc.clamp = (d) => this.kickoffClamp(p, d);
-        p.kickArmed = !p.input.kick;
-      });
-    }
-    this.ballHistory.length = 0;
-    this.lastTouch = null;
-    for (const b of Object.values(this.brains)) b.reset();
-  }
-
-  // Durante el saque cada equipo queda en su mitad; el que no saca, fuera del círculo central.
-  kickoffClamp(p, d) {
-    if (d.x * p.attack > 0) {
-      d.x = 0;
-      d.vx = 0;
-    }
-    if (p.team !== this.kickingTeam) {
-      const min = C.CENTER_RADIUS + d.r;
-      const l = Math.hypot(d.x, d.y);
-      if (l < min) {
-        const nx = l ? d.x / l : -p.attack, ny = l ? d.y / l : 0;
-        d.x = nx * min;
-        d.y = ny * min;
-      }
-    }
-  }
-
   update(time, delta) {
     this.acc += Math.min(delta, 250);
     let n = 0;
@@ -237,92 +170,22 @@ export class GameScene extends Phaser.Scene {
   }
 
   fixedTick() {
-    this.tick++;
-    const ball = this.ball;
-
-    // historial del balón para la reacción retardada de la IA
-    this.ballHistory.push({ x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
-    if (this.ballHistory.length > 30) this.ballHistory.shift();
-    for (const team of ['red', 'blue']) this.teamThink(team);
-
-    for (const p of this.players) {
-      if (p.human) {
-        p.input.x = this.controls.dirX;
-        p.input.y = this.controls.dirY;
-        p.input.kick = this.controls.kick;
-      }
-      const d = p.disc;
-      const kicking = p.input.kick;
-      const accel = kicking ? C.PLAYER_KICK_ACCEL : C.PLAYER_ACCEL;
-      d.damping = kicking ? C.PLAYER_KICK_DAMPING : C.PLAYER_DAMPING;
-      d.vx += p.input.x * accel;
-      d.vy += p.input.y * accel;
-
-      if (!kicking) p.kickArmed = true;
-      else if (p.kickArmed) {
-        const dx = ball.x - d.x, dy = ball.y - d.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist - d.r - ball.r <= C.KICK_DIST && dist > 0) {
-          const k = C.KICK_STRENGTH * ball.invMass;
-          ball.vx += (dx / dist) * k;
-          ball.vy += (dy / dist) * k;
-          p.kickArmed = false;
-          p.lastKick = this.tick;
-          this.onKick(p);
-        }
-      }
-    }
-
-    this.world.step();
-
-    // último en tocar el balón (para la IA) y pases completados (para afinar la IA)
-    for (const p of this.players) {
-      if (Math.hypot(ball.x - p.disc.x, ball.y - p.disc.y) - p.disc.r - ball.r < 0.5) {
-        const prev = this.lastTouch;
-        if (prev && prev !== p && prev.team === p.team) this.stats[p.team].passes++;
-        this.lastTouch = p;
-      }
-    }
-
-    if (this.state === 'kickoff' && (ball.vx !== 0 || ball.vy !== 0)) {
-      this.state = 'play';
-      for (const p of this.players) p.disc.clamp = null;
-    }
-    if (this.state === 'play' && Math.abs(ball.y) < C.GOAL_HALF && Math.abs(ball.x) > C.FIELD_W) {
-      this.onGoal(ball.x > 0 ? 'red' : 'blue');
-    }
-    if (this.state === 'goal' && this.tick >= this.resetTick) {
-      this.startKickoff(this.concededBy);
-    }
+    this.match.humanInput.x = this.controls.dirX;
+    this.match.humanInput.y = this.controls.dirY;
+    this.match.humanInput.kick = this.controls.kick;
+    this.match.step();
   }
 
-  // IA de un equipo según su dificultad (Fácil = IA original por roles)
-  teamThink(team) {
-    const mates = team === this.human.team && C.TEAMMATE_LEVEL;
-    const level = this.levelOverride?.[team] ?? (mates || this.difficulty);
-    const L = C.AI_LEVELS[level];
-    const hist = this.ballHistory;
-    const seen = hist[Math.max(0, hist.length - 1 - ms2ticks(L.reactionMs))];
-    const members = this.players.filter((p) => p.team === team);
-    if (level === 'easy') {
-      if (this.tick % ms2ticks(C.AI_ROLE_MS) === 0 || this.tick === 1) assignRoles(members, seen);
-      if (this.tick % ms2ticks(L.thinkMs) !== 0) return;
-      for (const p of members) {
-        if (p.human) continue;
-        if (Math.random() < 0.1) p.aimError = (Math.random() * 2 - 1) * C.AI_AIM_ERROR;
-        think(p, seen);
-      }
-      return;
-    }
-    if (this.tick % ms2ticks(L.thinkMs) !== 0) return;
-    const brain = this.brains[team];
-    brain.setLevel(level);
-    brain.think({ ball: seen, players: this.players, tick: this.tick, lastTouch: this.lastTouch });
+  // el humano pidió el pase: destello en su anillo
+  onPassRequest() {
+    const ring = this.human.ring;
+    this.tweens.add({ targets: ring, scale: { from: 1.9, to: 1 }, duration: 260, ease: 'Quad.Out' });
+    beep(C.SOUND_KICK * 1.5, 0.04);
   }
 
-  // solo para pruebas: fija la dificultad de cada equipo (null = la del menú)
+  // solo para pruebas: fija la dificultad de cada equipo
   setTeamLevels(red, blue) {
-    this.levelOverride = red || blue ? { red, blue } : null;
+    this.match.levels = { red: red || 'mate', blue: blue || this.difficulty };
   }
 
   onKick(p) {
@@ -335,10 +198,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   onGoal(scorer) {
-    this.state = 'goal';
-    this.score[scorer]++;
-    this.concededBy = scorer === 'red' ? 'blue' : 'red';
-    this.resetTick = this.tick + ms2ticks(C.GOAL_PAUSE_MS);
     this.updateScore();
     this.cameras.main.shake(250, 0.012);
     navigator.vibrate?.([40, 40, 80]);
@@ -365,7 +224,7 @@ export class GameScene extends Phaser.Scene {
     this.controls.draw();
     if (this.fpsText) {
       const b = this.ball;
-      this.fpsText.setText(`FPS ${this.game.loop.actualFps.toFixed(0)}  v ${Math.hypot(b.vx, b.vy).toFixed(2)}  ${this.state}`);
+      this.fpsText.setText(`FPS ${this.game.loop.actualFps.toFixed(0)}  v ${Math.hypot(b.vx, b.vy).toFixed(2)}  ${this.match.state}`);
     }
   }
 }

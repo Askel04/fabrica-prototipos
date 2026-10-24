@@ -1,4 +1,4 @@
-// Utilidades tácticas compartidas por la IA Normal y Difícil.
+// Habilidades motoras y geometría básica de la IA (conducir, chutar a un punto, despejar...).
 import { CONFIG as C } from '../config.js';
 
 // velocidad punta aproximada de un jugador (v = a·d / (1 - d))
@@ -50,10 +50,10 @@ export function clampField(x, y, m = 20) {
 }
 
 // ir a un punto frenando al llegar y compensando la inercia
-export function steer(p, tx, ty, speed = 1) {
+export function steer(p, tx, ty, speed = 1, arrive = C.AI_ARRIVE) {
   const d = p.disc;
   const [ex, ey] = norm(tx - d.x - d.vx * 8, ty - d.y - d.vy * 8);
-  const m = Math.min(1, Math.hypot(tx - d.x, ty - d.y) / C.AI_ARRIVE) * speed;
+  const m = Math.min(1, Math.hypot(tx - d.x, ty - d.y) / arrive) * speed;
   p.input.x = ex * m;
   p.input.y = ey * m;
 }
@@ -111,21 +111,28 @@ export function ballTo(p, ball, tx, ty, { mode = 'push', aimErr = 0, kickAngle =
   const [bx, by, bl] = norm(ball.x - d.x, ball.y - d.y);
   const edge = bl - CONTACT;
   const along = (d.x - ball.x) * nx + (d.y - ball.y) * ny; // >0: delante del balón
+  const px = -ny, py = nx;
+  const lateral = (d.x - ball.x) * px + (d.y - ball.y) * py; // distancia a la línea de tiro
   let kick = false;
   if (along > -CONTACT * 0.5) {
-    const px = -ny, py = nx;
-    const side = (d.x - ball.x) * px + (d.y - ball.y) * py >= 0 ? 1 : -1;
+    // delante o al lado del balón: rodearlo por el lado en el que estoy
+    const side = lateral >= 0 ? 1 : -1;
     const off = CONTACT + 12;
-    steer(p, ball.x - nx * off + px * side * off, ball.y - ny * off + py * side * off, speed);
+    steer(p, ball.x - nx * off + px * side * off, ball.y - ny * off + py * side * off, speed, 10);
+  } else if ((Math.abs(lateral) > CONTACT * 0.8 && along > -CONTACT * 2.5) ||
+    (edge < 16 && Math.acos(Math.max(-1, Math.min(1, bx * nx + by * ny))) > Math.max(kickAngle * 1.5, 0.35))) {
+    // detrás pero desplazado (o pegado y mal orientado): ir primero al punto de detrás del balón
+    steer(p, ball.x - nx * (CONTACT + 6), ball.y - ny * (CONTACT + 6), speed, 10);
   } else {
+    // en la línea: avanzar en la dirección buscada corrigiendo el desvío lateral
+    const corr = Math.max(-1, Math.min(1, lateral / 10)) * 0.9;
+    const [ix, iy] = norm(nx - px * corr, ny - py * corr);
     const aligned = Math.acos(Math.max(-1, Math.min(1, bx * nx + by * ny)));
-    if (aligned < kickAngle) {
-      p.input.x = bx * speed;
-      p.input.y = by * speed;
-      if (mode === 'kick' && edge <= C.KICK_DIST + 4) kick = true;
-    } else {
-      steer(p, ball.x - nx * (CONTACT - 2), ball.y - ny * (CONTACT - 2), speed);
-    }
+    // muy cerca y aún desalineado: frenar para no empujar el balón hacia otro lado
+    const s = edge < 6 && aligned > kickAngle ? speed * 0.4 : speed;
+    p.input.x = ix * s;
+    p.input.y = iy * s;
+    if (mode === 'kick' && aligned < kickAngle && edge <= C.KICK_DIST + 2) kick = true;
   }
   p.input.kick = kick && p.kickArmed;
 }

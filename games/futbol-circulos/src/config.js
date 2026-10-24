@@ -1,5 +1,20 @@
 // Parámetros del juego: tamaños, velocidades, dificultad.
 // Unidades = las del formato de estadios de Haxball (estadio "Classic").
+// Diales comunes a todos los niveles de IA (cada nivel sobrescribe lo que cambia).
+const AI_BASE = {
+  kickAngle: 0.12, // alineación (rad) para chutar o pasar
+  possessEdge: 12, // distancia borde-balón para considerar que alguien lo tiene
+  contestDist: 12, // rival a esta distancia del balón = balón disputado
+  dangerDist: 115, // cerca de la propia portería: pase seguro o despeje
+  shootRange: 330,
+  softPass: 130, // pases más cortos que esto van con empujón, no con chute
+  holdTicks: 80, // puede conducir ~1,3 s si no le presionan
+  decideTicks: 14, // cada cuánto replantea la conducción
+  dribbleSpeed: 0.85,
+  requestBonus: 2, // extra a pasar al humano cuando pide el balón
+  anchorX: 90, // el portero se adelanta hasta aquí cuando su equipo ataca
+};
+
 export const CONFIG = {
   WIDTH: 860,
   HEIGHT: 440,
@@ -55,57 +70,42 @@ export const CONFIG = {
   PAUSE_BTN_SIZE: 40,
   PAUSE_BTN_MARGIN: 12,
 
-  // IA
-  AI_ROLE_MS: 500, // cada cuánto reasigna roles
-  AI_AIM_ERROR: 0.12, // radianes de error de puntería (±)
-  AI_KICK_ANGLE: 0.35, // radianes de alineación para chutar
-  AI_SHOOT_RANGE: 320, // distancia a portería para chutar a puerta
-  AI_ARRIVE: 30, // distancia a la que empieza a frenar
-  AI_DEFEND_DIST: 110, // distancia del defensa a su portería
-  AI_SUPPORT_Y: 90, // separación lateral del que apoya
-  AI_STALL_THINKS: 8, // pensamientos atascado antes de retroceder
-  AI_BACKOFF_THINKS: 5,
-  AI_SPEED: 1, // multiplicador de magnitud del input IA (≤1)
-  // Los valores AI_* de arriba son la IA Fácil. Normal y Difícil (src/ai/team.js):
-  // tiempos *Ticks a 60 Hz; distancias en unidades del campo.
-  // La dificultad del menú cambia a los rivales; tus compañeros juegan siempre a este nivel
-  // (null = el mismo que los rivales).
-  TEAMMATE_LEVEL: 'normal',
+  // IA: un solo cerebro (src/ai/brain.js); cada nivel son diales, como en los juegos de EA.
+  AI_ARRIVE: 30, // distancia a la que la IA empieza a frenar al llegar a un punto
+  // La dificultad del menú cambia a los rivales; tus compañeros usan siempre el perfil 'mate'.
   AI_LEVELS: {
-    easy: { thinkMs: 100, reactionMs: 150 }, // cada cuánto piensa y retardo con el que "ve" el balón
+    easy: {
+      ...AI_BASE,
+      reactionMs: 250, thinkMs: 120, noise: 16, temperature: 0.4, aim: 0.13, // reacción, ruido, decisiones, puntería
+      shotAngle: 0.2, oppReact: 10,
+      through: false, wallPass: false, oneTwo: false, drop: false, fakes: false, // inteligencia en ataque
+      pressSpeed: 0.8, coverSpeed: 0.85, shade: 0, standOff: 24, bodyBlock: false, laneCut: false, shift: false, pinch: 0.25, // en defensa
+      sweepRange: 110, keeperDare: -6, keeperOut: 0.1, keeperMaxOut: 30, keeperRush: 70, // portero
+    },
     normal: {
-      thinkMs: 80, reactionMs: 120,
-      aim: 0.08, kickAngle: 0.3, shotAngle: 0.14, mistake: 0.12, // error de puntería y prob. de decisión mala
-      possessEdge: 10, // distancia borde-balón para considerar que se tiene el balón
-      shootRange: 340, shotLaneMargin: -6, // margen negativo: tira aunque la línea esté medio tapada
-      holdTicks: 70, maxHoldTicks: 150, decideTicks: 15, // conducir 1-2 s antes de pasar
-      pressureDist: 55, passLaneMargin: 6, passScoreMin: 40, softPassDist: 140,
-      wForward: 0.5, humanBonus: 15, oneTwoBonus: 0, alignCost: 30,
-      dribbleSpeed: 0.85,
-      keeperDist: 45, sweepRange: 170, anchorX: 70, // portero
-      shadow: 0.3, pinch: 0.35, // presión: cuánto tapa el pase y prob. de pinchazo
-      stallThinks: 12,
-      contestDist: 12, // rival a esta distancia del balón = disputado
-      dangerDist: 120, // cerca de la propia portería: despejar o pase seguro
-      roles: false, giveAndGo: false, wallPasses: false, fakeChance: 0, drop: false,
-      bodyBlock: false, laneCut: false, shift: false,
+      ...AI_BASE,
+      reactionMs: 160, thinkMs: 90, noise: 8, temperature: 0.2, aim: 0.08,
+      shotAngle: 0.14, oppReact: 7,
+      through: true, wallPass: false, oneTwo: true, drop: false, fakes: false,
+      pressSpeed: 1, coverSpeed: 1, shade: 0.3, standOff: 40, bodyBlock: false, laneCut: false, shift: true, pinch: 0.45,
+      sweepRange: 170, keeperDare: 2, keeperOut: 0.18, keeperMaxOut: 60, keeperRush: 110,
     },
     hard: {
-      thinkMs: 50, reactionMs: 70,
-      aim: 0.04, kickAngle: 0.25, shotAngle: 0.1, mistake: 0.05,
-      possessEdge: 10,
-      shootRange: 360, shotLaneMargin: -4,
-      holdTicks: 35, maxHoldTicks: 100, decideTicks: 12,
-      pressureDist: 60, passLaneMargin: 4, passScoreMin: 25, softPassDist: 120,
-      wForward: 0.6, humanBonus: 10, oneTwoBonus: 40, alignCost: 25,
-      dribbleSpeed: 0.85,
-      keeperDist: 60, sweepRange: 200, anchorX: 110,
-      shadow: 0.45, pinch: 0.8,
-      stallThinks: 15,
-      contestDist: 14,
-      dangerDist: 110,
-      roles: true, giveAndGo: true, wallPasses: true, fakeChance: 0.12, drop: true,
-      bodyBlock: true, laneCut: true, shift: true,
+      ...AI_BASE,
+      reactionMs: 60, thinkMs: 40, noise: 1.5, temperature: 0.04, aim: 0.03,
+      shotAngle: 0.1, oppReact: 5,
+      through: true, wallPass: true, oneTwo: true, drop: true, fakes: true,
+      pressSpeed: 1, coverSpeed: 1, shade: 0.45, standOff: 36, bodyBlock: true, laneCut: true, shift: true, pinch: 0.8,
+      sweepRange: 220, keeperDare: 4, keeperOut: 0.24, keeperMaxOut: 85, keeperRush: 140,
+    },
+    // compañeros del humano: buen nivel y muy pendientes de jugar contigo
+    mate: {
+      ...AI_BASE,
+      reactionMs: 70, thinkMs: 50, noise: 2, temperature: 0.06, aim: 0.035,
+      shotAngle: 0.12, oppReact: 6,
+      through: true, wallPass: true, oneTwo: true, drop: true, fakes: false,
+      pressSpeed: 1, coverSpeed: 1, shade: 0.4, standOff: 38, bodyBlock: true, laneCut: true, shift: true, pinch: 0.6,
+      sweepRange: 200, keeperDare: 3, keeperOut: 0.22, keeperMaxOut: 75, keeperRush: 130,
     },
   },
 
