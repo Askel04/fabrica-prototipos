@@ -9,15 +9,15 @@
 // peers(): [{ peer, isMe, presence }]
 
 export async function openTransport() {
-  const forceLocal = new URLSearchParams(location.search).has('localnet');
-  if (!forceLocal && window.claude?.use) {
-    try {
-      const room = await window.claude.use('room');
-      if (room) return { kind: 'room', join: (code) => joinClaudeRoom(room, code) };
-    } catch { /* sin capacidad: cae a local */ }
-  }
-  if (forceLocal || !window.claude) return { kind: 'local', join: (code) => joinLocalRoom(code) };
-  return null; // dentro de Claude pero sin salas disponibles
+  if (new URLSearchParams(location.search).has('localnet')) return { kind: 'local', join: (code) => joinLocalRoom(code) };
+  // el visor de Claude puede inyectar window.claude un poco después de cargar
+  for (let i = 0; i < 30 && !window.claude?.use; i++) await new Promise((r) => setTimeout(r, 100));
+  if (!window.claude?.use) return null;
+  try {
+    const room = await window.claude.use('room');
+    if (room) return { kind: 'room', join: (code) => joinClaudeRoom(room, code) };
+  } catch { /* sin salas */ }
+  return null; // fuera de claude.ai o sin salas disponibles
 }
 
 const roomName = (code) => `fc-${code.toLowerCase()}`;
