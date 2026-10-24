@@ -61,7 +61,7 @@ export class GameScene extends Phaser.Scene {
     this.updateScore();
 
     if (this.debug) {
-      // capa de depuración de la IA rival: portero, roles y mapa de calor de desmarques
+      // capa de depuración de la IA: rotación, último hombre y mapa de calor de desmarques
       this.dbgGfx = this.add.graphics().setDepth(8);
       this.dbgTexts = this.players.map(() => this.add.text(0, 0, '', {
         fontFamily: 'monospace', fontSize: '10px', color: '#ffffff', stroke: '#000000', strokeThickness: 3,
@@ -234,19 +234,22 @@ export class GameScene extends Phaser.Scene {
         g.fillCircle(c.x, c.y, 5);
       }
     }
-    // portero: zona de salida, bisectriz y punto K
+    // último hombre: punto de sombra en la bisectriz balón-portería y zona en la que sale
     const ogx = -brain.attack * C.FIELD_W;
     g.lineStyle(1, 0x00ffff, 0.6);
-    g.strokeCircle(ogx, 0, brain.P.gkSweep);
-    const K = brain.keeperSpot(brain.ball);
+    g.strokeCircle(ogx, 0, brain.P.sweep);
+    const K = brain.shadowSpot(brain.ball);
     g.lineStyle(1, 0xffff00, 0.8);
     g.lineBetween(brain.ball.x, brain.ball.y, K.x, K.y);
     g.fillStyle(0xffff00, 1);
     g.fillCircle(K.x, K.y, 4);
     // rol de cada jugador IA
+    // puesto en la rotación (1.º / 2.º / 3.º) y tarea de cada jugador
     this.players.forEach((p, i) => {
+      const rot = this.match.brains[p.team].rot || {};
+      const n = p === rot.first ? '1º' : p === rot.second ? '2º' : p === rot.third ? '3º' : '';
       const t = this.dbgTexts[i];
-      t.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 2).setText(p.human ? 'tú' : p.job || '');
+      t.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 2).setText(p.human ? `tú ${n}` : `${n} ${p.job || ''}`);
     });
   }
 

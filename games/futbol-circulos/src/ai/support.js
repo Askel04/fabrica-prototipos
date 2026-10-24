@@ -60,21 +60,13 @@ export function scoreSpot(brain, p, x, y, ball, taken, cache = null) {
   let crowd = 0;
   for (const q of brain.players) if (q !== p) crowd += Math.max(0, 1 - Math.hypot(q.disc.x - x, q.disc.y - y) / 100);
   for (const t of taken) crowd += Math.max(0, 1 - Math.hypot(t.x - x, t.y - y) / 100);
-  // zona del rol: el portero-líbero sube como mucho hasta cierta altura según el nivel
-  let outside = 0;
-  if (p === brain.keeper) {
-    // portero-líbero: hasta su zona máxima, siempre 80 por detrás del balón y sin pasar de donde
-    // podría volver a su portería antes de que un rival llegue al balón y chute
-    // y siempre por detrás del rival más retrasado (último hombre) con margen
+    let outside = 0;
+  if (p.job === 'support3') {
+    // 3.º con posesión: por detrás del balón, sin pasar de su profundidad máxima ni del último rival
     const lastOpp = Math.min(...brain.oppsV.map((o) => o.disc.x * a));
-    const ballDepth = ball.x * a + W; // distancia del balón a su portería (en x)
-    const maxX = Math.max(-W + 30, Math.min(-W + Math.min(P.liberoDepth, ballDepth - 200), lastOpp - 40));
-    brain.liberoMaxX = maxX;
+    const maxX = Math.max(-W + 40, Math.min(ball.x * a - 90, -W + P.lastManDepth, lastOpp - 30));
+    brain.thirdMaxX = maxX;
     outside = Math.max(0, x * a - maxX) / 25;
-    // tiempo de volver desde S a su portería frente al de un rival en llegar al balón
-    const back = Math.hypot(x + a * (W - 30), y) / 2.4;
-    const oppToBall = Math.min(...brain.oppsV.map((o) => timeToReach(o, ball.x, ball.y)));
-    outside += Math.max(0, back - oppToBall - 15) / 15;
   }
   const move = Math.hypot(x - p.disc.x, y - p.disc.y) / 300;
   return w.supPass * pass + w.supShot * shot + w.supDist * dist + w.supSpace * space +
@@ -88,8 +80,9 @@ export function assignSpots(brain, supporters, ball) {
   if (P.supportSamples === 0) {
     supporters.forEach((p, i) => {
       const side = i % 2 === 0 ? -1 : 1;
-      const x = p === brain.keeper ? -a * (W - 40) : ball.x - a * 50;
-      result.set(p, { x, y: p === brain.keeper ? 0 : ball.y + side * 80, s: 0 });
+      const third = p.job === 'support3';
+      const x = third ? ball.x - a * 140 : ball.x - a * 50;
+      result.set(p, { x, y: third ? ball.y * 0.3 : ball.y + side * 80, s: 0 });
     });
     for (const [p, s] of result) [s.x, s.y] = clampField(s.x, s.y, 25);
     return result;
@@ -114,7 +107,7 @@ export function assignSpots(brain, supporters, ball) {
   const left = [...supporters];
   const cache = new Map();
   const scored = new Map(left.map((p) => [p, cands.map(([x, y]) => ({ x, y, s: scoreSpot(brain, p, x, y, ball, [], cache) }))]));
-  const shown = left.find((p) => p !== brain.keeper) || left[0];
+  const shown = left.find((p) => p.job === 'support') || left[0];
   brain.debugSpots = scored.get(shown) || null;
   while (left.length) {
     let bestP = null, best = null;
@@ -133,8 +126,8 @@ export function assignSpots(brain, supporters, ball) {
       if (best.s - prevS < 0.12 * Math.abs(best.s)) chosen = { x: prev.x, y: prev.y, s: prevS };
     }
     // límite duro del líbero (la penalización sola no basta si todos los puntos están fuera)
-    if (bestP === brain.keeper && brain.liberoMaxX !== undefined && chosen.x * a > brain.liberoMaxX) {
-      chosen = { ...chosen, x: brain.liberoMaxX * a, y: chosen.y * 0.5 };
+    if (bestP.job === 'support3' && brain.thirdMaxX !== undefined && chosen.x * a > brain.thirdMaxX) {
+      chosen = { ...chosen, x: brain.thirdMaxX * a };
     }
     result.set(bestP, chosen);
     brain.spots.set(bestP, chosen);

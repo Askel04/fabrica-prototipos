@@ -60,7 +60,7 @@ export const CONFIG = {
   // Dificultad = un único θ ∈ [0, 1] que interpola todos los diales (src/ai/params.js).
   // La dificultad del menú cambia a los rivales; tus compañeros usan siempre el perfil 'mate'.
   AI_LEVELS: {
-    easy: { theta: 0.15 },
+    easy: { theta: 0.05 },
     normal: { theta: 0.4 },
     hard: { theta: 1 },
     mate: { theta: 0.8 },

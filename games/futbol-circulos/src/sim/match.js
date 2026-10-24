@@ -42,8 +42,8 @@ export class Match {
     this.events = {}; // kick(p), goal(scorer), post(), passRequest()
     this.score = { red: 0, blue: 0 };
     this.stats = {
-      red: { passes: 0, shots: 0, lost: 0, ownGoals: 0, sweeps: 0, gkAtk: 0, gkAtkN: 0, steals: 0 },
-      blue: { passes: 0, shots: 0, lost: 0, ownGoals: 0, sweeps: 0, gkAtk: 0, gkAtkN: 0, steals: 0 },
+      red: { passes: 0, shots: 0, lost: 0, ownGoals: 0, sweeps: 0, thirdDepth: 0, thirdDepthN: 0, steals: 0, rotations: 0 },
+      blue: { passes: 0, shots: 0, lost: 0, ownGoals: 0, sweeps: 0, thirdDepth: 0, thirdDepthN: 0, steals: 0, rotations: 0 },
     };
     this.tick = 0;
     this.ballHistory = [];
@@ -124,6 +124,7 @@ export class Match {
           p.lastKick = this.tick;
           this.touch(p);
           this.brains[p.team === 'red' ? 'blue' : 'red'].onOppKick(p, ball);
+          this.brains[p.team].onOwnKick(p, ball);
           this.events.kick?.(p);
         }
       }

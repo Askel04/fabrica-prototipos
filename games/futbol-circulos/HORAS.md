@@ -13,4 +13,5 @@
 | 2026-10-24 | Entrenamiento por autojuego, escenarios de prueba y calibrado de niveles con Elo | 1.5 |
 | 2026-10-25 | IA por capas según el informe: percepción, roles, desmarque, portero líbero, tabla por θ | 2.5 |
 | 2026-10-25 | Ablaciones y calibrado de niveles (Elo), escenarios nuevos, depuración visual | 2 |
-| | **Total** | **13.25** |
+| 2026-10-25 | Sin portero: rotación 1.º/2.º/3.º estilo Rocket League, calibrado y pruebas | 2 |
+| | **Total** | **15.25** |

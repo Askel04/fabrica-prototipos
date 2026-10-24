@@ -18,9 +18,10 @@ const TABLE = {
   passMarginS: [0, 0.05, 0.12, 0.18, 0.22], // margen de seguridad del pase
   supportSamples: [0, 20, 40, 72, 100], // puntos de desmarque evaluados (0 = zona fija)
   supportHz: [1, 2, 3, 5, 8],
-  gkMaxAdvance: [0.1, 0.2, 0.35, 0.4, 0.45], // ×ancho de portería; algo más retrasado que el informe (pedido)
-  gkSweep: [0.4, 0.55, 0.8, 0.85, 0.9], // zona de salida del portero, ×ancho de portería (campo pequeño)
-  gkMarginS: [0.4, 0.3, 0.2, 0.17, 0.15], // ventaja que necesita el portero para salir
+  lastManHold: [0.1, 0.2, 0.35, 0.4, 0.45], // profundidad del último hombre en defensa, ×ancho de portería
+  sweep: [0.4, 0.55, 0.8, 0.85, 0.9], // zona en la que el último hombre sale a por el balón, ×ancho de portería
+  sweepMarginS: [0.4, 0.3, 0.2, 0.17, 0.15], // ventaja que necesita para salir
+  rotHystTicks: [24, 18, 12, 8, 6], // histéresis del orden de rotación
   pressSpeed: [0.75, 0.85, 1, 1, 1], // intensidad de la presión (input, no velocidad máxima)
 };
 
@@ -41,11 +42,12 @@ export function levelParams(theta) {
   P.decisionTicks = ticks(P.decisionMs);
   P.horizonTicks = Math.round(P.horizonS * C.TICK_HZ);
   P.passMarginTicks = P.passMarginS * C.TICK_HZ;
-  P.gkMarginTicks = P.gkMarginS * C.TICK_HZ;
+  P.sweepMarginTicks = P.sweepMarginS * C.TICK_HZ;
+  P.rotHyst = Math.round(P.rotHystTicks);
   P.supportSamples = Math.round(P.supportSamples);
   P.supportTicks = Math.max(1, Math.round(C.TICK_HZ / P.supportHz));
-  P.gkMaxAdvance *= GW;
-  P.gkSweep *= GW;
+  P.lastManHold *= GW;
+  P.sweep *= GW;
   P.aim = (P.aimDeg * Math.PI) / 180;
   P.passAim = (P.passDeg * Math.PI) / 180;
   P.align = (P.alignDeg * Math.PI) / 180;
@@ -53,10 +55,12 @@ export function levelParams(theta) {
   P.through = theta >= 0.4; // pase al espacio
   P.oneTwo = theta >= 0.5; // pared
   P.wallPass = theta >= 0.8; // pase a la banda
-  P.drop = theta >= 0.8; // dejada al portero
+  P.drop = theta >= 0.8; // dejada atrás al último hombre
   P.fakes = theta >= 0.8; // amagos
-  P.libero = theta >= 0.35; // el portero se suma al ataque
-  P.liberoDepth = 90 + 110 * theta; // hasta cuánto se aleja de su portería en ataque
+  // rotación (sin portero): el que actúa vuelve atrás; los demás suben un puesto
+  P.rotateBack = theta >= 0.3;
+  P.farPost = theta >= 0.6; // vuelve por el lado alejado de la jugada
+  P.lastManDepth = 120 + 280 * theta; // hasta dónde sube el 3.º con posesión (desde su portería)
   // inteligencia en defensa
   P.cover = theta >= 0.35; // un segundo jugador cubre la línea de pase
   P.laneCut = theta >= 0.5; // la cobertura corta la línea en vez de marcar al hombre

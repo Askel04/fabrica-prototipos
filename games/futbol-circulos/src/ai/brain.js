@@ -1,6 +1,6 @@
 // Cerebro de equipo por capas (informe "IA de CPU en juegos deportivos"):
 //   percepción con retardo → estado de equipo (posesión / sin posesión / suelto, con histéresis)
-//   → roles por tiempo de intercepción (presionador, cobertura, apoyos, portero) → steering.
+//   → rotación 1.º/2.º/3.º sin portero (como Rocket League 3v3) → steering.
 // Un solo cerebro para todos los niveles; la dificultad es un vector de parámetros interpolado por θ
 // (src/ai/params.js). Mismas físicas para todos: los niveles altos deciden mejor, no corren más.
 import { CONFIG as C } from '../config.js';
@@ -52,12 +52,12 @@ export class TeamBrain {
     this.attack = this.players[0].attack;
     this.w = { ...DEFAULT_WEIGHTS, ...TRAINED, ...(weights || {}) };
     this.noise = { x: 0, y: 0, vx: 0, vy: 0 };
-    this.adapt = { sectors: [0, 0, 0], long: 0, short: 0, biasY: 0, gkBonus: 0 };
+    this.adapt = { sectors: [0, 0, 0], long: 0, short: 0, biasY: 0, holdBonus: 0 };
     this.reset();
   }
 
   reset() {
-    this.keeper = null;
+    this.rot = null;
     this.phase = 'loose';
     this.phaseCand = null;
     this.lastThink = -1e9;
@@ -81,6 +81,16 @@ export class TeamBrain {
   // un compañero recibió un pase (lo llama Match)
   onReceive(from, to) {
     this.lastPass = { from, to, tick: this.m.tick };
+  }
+
+  // un jugador propio chutó (lo llama Match): si es un tiro a puerta o un despeje largo, debe rotar
+  onOwnKick(p, ball) {
+    const a = this.attack;
+    const path = trajectory(ball.x, ball.y, ball.vx, ball.vy, 90);
+    const end = path[path.length - 1];
+    const shot = end.goal === a;
+    const clear = !shot && ball.x * a < 0 && ball.vx * a > 2;
+    if (shot || clear) { p.rotateNow = true; p.rotateType = shot ? 'shot' : 'clear'; }
   }
 
   // un rival chutó (lo llama Match): estadística para la adaptación
@@ -115,8 +125,6 @@ export class TeamBrain {
     this.oppsV = view.opps;
     const ball = this.ball;
     const ais = this.players.filter((p) => !p.human);
-    if (!this.keeper || !ais.includes(this.keeper)) this.keeper = minBy(ais, (p) => p.disc.x * a);
-    const kp = this.keeper;
 
     // ¿quién tiene el balón? (sobre lo que percibe)
     const all = [...this.players, ...this.oppsV];
@@ -137,99 +145,111 @@ export class TeamBrain {
 
     // predicción del balón y tiempos de intercepción (con el horizonte del nivel)
     this.path = trajectory(ball.x, ball.y, ball.vx, ball.vy, 120);
-    const H = P.horizonTicks;
-    const itOf = new Map(all.map((p) => [p, intercept(p, this.path, H)]));
+    const itOf = new Map(all.map((p) => [p, intercept(p, this.path, P.horizonTicks)]));
     this.itOf = itOf;
     const tOpp = Math.min(...this.oppsV.map((o) => itOf.get(o).t));
     this.tOpp = tOpp;
 
+    // ---- rotación 1.º / 2.º / 3.º (como en Rocket League 3v3, sin portero) ----
+    const ours = phase === 'attack' && this.owner && this.owner.team === this.team;
+    const { first, second, third } = this.assignRotation(ours ? this.owner : null, itOf);
+    this.rot = { first, second, third };
+
     const jobs = new Map();
-    const field = ais.filter((p) => p !== kp);
-    const human = this.players.find((p) => p.human);
-
-    if (phase === 'attack' && this.owner && this.owner.team === this.team) {
-      if (!this.owner.human) jobs.set(this.owner, 'carry');
-      // el portero solo se suma al ataque con el balón lejos de su portería
-      const ballDepth = ball.x * a + W;
-      for (const p of ais) if (!jobs.has(p)) jobs.set(p, p === kp ? (P.libero && ballDepth > 260 ? 'libero' : 'keep') : 'support');
+    if (ours) {
+      jobs.set(first, 'carry');
+      jobs.set(second, 'support');
+      jobs.set(third, 'support3');
     } else if (phase === 'loose' || !this.owner || this.owner.team === this.team || raw === 'loose') {
-      // balón suelto: va quien llega antes (con histéresis); el portero tiene prioridad en su zona
-      const kIt = kp && itOf.get(kp);
-      const fromGoal = kIt ? Math.hypot(kIt.x + a * W, kIt.y) : Infinity;
-      const keeperGoes = kp && kIt.seen && fromGoal < P.gkSweep &&
-        Math.abs(kIt.y) < G + 90 && kIt.t + P.gkMarginTicks < tOpp;
-      let chaser = keeperGoes ? kp : null;
-      if (!chaser) {
-        const cands = [...field, ...(human ? [human] : [])];
-        chaser = minBy(cands, (p) => itOf.get(p).t - (p === this.chaser ? 8 : 0) + (p.human ? -6 : 0));
-      }
-      this.chaser = chaser;
-      if (chaser && !chaser.human) jobs.set(chaser, 'chase');
-      if (keeperGoes && this.keeperJob !== 'chase') m.stats[this.team].sweeps++;
-      const winning = chaser && itOf.get(chaser).t + 6 < tOpp;
-      for (const p of ais) {
-        if (jobs.has(p)) continue;
-        if (p === kp) jobs.set(p, 'keep');
-        else if (P.bunch && Math.hypot(p.disc.x - ball.x, p.disc.y - ball.y) < 140) jobs.set(p, 'chase'); // se amontonan
-        else jobs.set(p, winning ? 'support' : 'cover');
-      }
+      jobs.set(first, 'chase');
+      const winning = itOf.get(first).t + 6 < tOpp;
+      // nivel bajo: el segundo también va al balón (se amontonan)
+      const bunch = P.bunch && Math.hypot(second.disc.x - ball.x, second.disc.y - ball.y) < 140;
+      jobs.set(second, bunch ? 'chase' : winning ? 'support' : 'cover');
+      // el último hombre sale a por el balón si gana la carrera con margen dentro de su zona
+      const tIt = itOf.get(third);
+      const fromGoal = Math.hypot(tIt.x + a * W, tIt.y);
+      const sweeps = tIt.seen && fromGoal < P.sweep && tIt.t + P.sweepMarginTicks < tOpp && tIt.t < itOf.get(first).t;
+      jobs.set(third, sweeps ? 'chase' : 'shadow');
+      if (sweeps && third.job !== 'chase') m.stats[this.team].sweeps++;
     } else {
-      // sin posesión: presionador = el que llega antes al poseedor (con histéresis)
-      const o = this.owner.disc;
-      const cands = [...field, ...(human ? [human] : [])];
-      const presser = minBy(cands, (p) => timeToReach(p, o.x, o.y) - (p === this.presser ? 8 : 0));
-      this.presser = presser;
-      if (presser && !presser.human) jobs.set(presser, 'press');
-      const inTheirHalf = o.x * a > 0;
-      for (const p of field) {
-        if (jobs.has(p)) continue;
-        if (P.doublePress && inTheirHalf) jobs.set(p, 'press2');
-        else jobs.set(p, 'cover'); // en niveles bajos la cobertura es floja (sin cortar líneas, sin bascular)
-      }
-      if (kp && !jobs.has(kp)) jobs.set(kp, 'keep');
+      jobs.set(first, 'press');
+      const inTheirHalf = this.owner.disc.x * a > 0;
+      jobs.set(second, P.doublePress && inTheirHalf ? 'press2' : 'cover');
+      jobs.set(third, 'shadow');
     }
-
-    // el portero no espera a la histéresis: si la posesión deja de ser clara, vuelve ya
-    if (kp && jobs.get(kp) === 'libero' && raw !== 'attack') jobs.set(kp, 'keep');
-    // portero fuera de su sitio y sin posesión clara: el defensa que cubre se mete bajo palos
-    if (kp && raw !== 'attack') {
-      const K = this.keeperSpot(ball);
-      if (Math.hypot(kp.disc.x - K.x, kp.disc.y - K.y) > 70) {
-        const cov = minBy(field.filter((p) => jobs.get(p) === 'cover' || jobs.get(p) === 'support'),
-          (p) => Math.hypot(p.disc.x - K.x, p.disc.y - K.y));
-        if (cov) jobs.set(cov, 'goalCover');
-      }
-    }
+    // el que rota hacia atrás no hace otra cosa hasta llegar (salvo si es el único que puede ir al balón)
+    for (const p of [second, third]) if (p.rotating && p.rotating.until > m.tick && jobs.get(p) !== 'chase') jobs.set(p, 'rotate');
 
     for (const p of ais) {
-      const job = jobs.get(p);
+      const job = jobs.get(p) || 'support';
       if (job !== 'carry' && job !== 'chase') { p.carryStart = null; p.act = null; }
       p.job = job;
     }
-    this.keeperJob = kp?.job;
-    if (kp && phase === 'attack') {
-      m.stats[this.team].gkAtk += Math.hypot(kp.disc.x + a * W, kp.disc.y);
-      m.stats[this.team].gkAtkN++;
+    // estadística: profundidad media del último hombre con posesión
+    if (ours) {
+      m.stats[this.team].thirdDepth += Math.hypot(third.disc.x + a * W, third.disc.y);
+      m.stats[this.team].thirdDepthN++;
     }
     this.updateSpots();
   }
 
+  // Orden de la rotación. 1.º = el que llega antes al balón (o el poseedor). 3.º = el más
+  // retrasado de los otros dos, siempre una IA si es posible (garantiza un último hombre).
+  // Con histéresis para no bailar, y el que acaba de actuar rota atrás y pasa a ser 3.º.
+  assignRotation(owner, itOf) {
+    const { P, m } = this;
+    const a = this.attack;
+    const prev = this.rot || {};
+    const team = this.players;
+    // ¿el 1.º anterior ya terminó su acción? (chutó/pasó, o el balón se le fue) → rota atrás
+    const pf = prev.first;
+    if (P.rotateBack && pf && !pf.human && pf !== owner) {
+      // rota atrás si acaba de tirar/despejar, o si le han superado (balón por detrás y un rival llega antes)
+      const acted = pf.rotateNow;
+      const ball = this.ball;
+      const behind = (pf.disc.x - ball.x) * a > 40;
+      const beaten = behind && this.tOpp < itOf.get(pf).t;
+      if ((acted || beaten) && !pf.rotating) {
+        pf.rotating = { until: m.tick + ticks(1400), farPost: P.farPost };
+        m.stats[this.team].rotations++;
+      }
+    }
+    for (const p of team) {
+      p.rotateNow = false;
+      if (p.rotating && p.rotating.until <= m.tick) p.rotating = null;
+    }
+
+    let first = owner;
+    if (!first) {
+      first = minBy(team, (p) => itOf.get(p).t - (p === pf ? P.rotHyst : 0) + (p.rotating ? 30 : 0) + (p.human ? -6 : 0));
+    }
+    if (first !== pf) first.firstSince = m.tick;
+    if (first.rotating) first.rotating = null;
+    const rest = team.filter((p) => p !== first);
+    // 3.º: el que está rotando, si no el más retrasado (con histéresis); preferiblemente una IA
+    const depth = (p) => p.disc.x * a - (p === prev.third ? P.rotHyst * 2 : 0) - (p.rotating ? 1000 : 0) + (p.human ? 60 : 0);
+    const third = minBy(rest, depth);
+    const second = rest.find((p) => p !== third) || third;
+    return { first, second, third };
+  }
+
   updateSpots() {
-    const sup = this.players.filter((p) => !p.human && (p.job === 'support' || p.job === 'libero'));
+    const sup = this.players.filter((p) => !p.human && (p.job === 'support' || p.job === 'support3'));
     if (!sup.length) return;
     const spots = assignSpots(this, sup, this.m.ball);
     for (const [p, s] of spots) p.spot = s;
   }
 
   // Adaptación lenta (Teamvision/ACE): si el rival insiste por una banda o con tiros lejanos,
-  // cerrar más esa banda y adelantar un poco al portero.
+  // cerrar más esa banda y adelantar un poco al último hombre.
   adaptPlan() {
     const s = this.adapt.sectors;
     const total = s[0] + s[1] + s[2];
     if (total < 4) return;
     const maxI = s.indexOf(Math.max(...s));
     this.adapt.biasY = s[maxI] / total > 0.45 ? [-90, 0, 90][maxI] : 0;
-    this.adapt.gkBonus = this.adapt.long > this.adapt.short * 1.5 ? 14 : 0;
+    this.adapt.holdBonus = this.adapt.long > this.adapt.short * 1.5 ? 14 : 0;
   }
 
   // ---------------- ejecución (cada tick) ----------------
@@ -239,19 +259,15 @@ export class TeamBrain {
       case 'carry': return this.carry(p);
       case 'chase': return this.chase(p);
       case 'support':
-      case 'libero':
+      case 'support3':
         if (p.run && p.run.until > this.m.tick) return steer(p, p.run.x, p.run.y, 1);
         if (p.spot) return steer(p, p.spot.x, p.spot.y, 1);
         return steer(p, p.disc.x, p.disc.y, 0);
       case 'press': return this.press(p);
       case 'press2': return this.press2(p);
       case 'cover': return this.cover(p);
-      case 'keep': return this.keep(p);
-      case 'goalCover': {
-        const K = this.keeperSpot(this.ball);
-        steer(p, K.x, K.y, 1, 8);
-        return this.pinch(p);
-      }
+      case 'shadow': return this.shadow(p);
+      case 'rotate': return this.rotateBack(p);
       default: return steer(p, p.disc.x, p.disc.y, 0);
     }
   }
@@ -344,10 +360,7 @@ export class TeamBrain {
     const pressure = Math.max(0, Math.min(1, 1 - (tOpp - 10) / 40));
     // zona de peligro: cerca de la propia portería, o en el propio tercio con un rival encima
     const ownThird = ball.x * a < -W * 0.35;
-    // el portero lejos de su zona la suelta rápido (pase seguro o despeje)
-    const keeperFar = p === this.keeper && fromOwnGoal > P.liberoDepth;
-    const danger = fromOwnGoal < 150 || (ownThird && pressure > 0.4) || keeperFar ||
-      (p === this.keeper && fromOwnGoal < P.gkSweep && pressure > 0.5);
+    const danger = fromOwnGoal < 150 || (ownThird && pressure > 0.4);
     const requested = p.team === m.human?.team && tick - m.passRequestTick < 90;
     const value = (x, y) => threat(x, y, a) + 0.15;
 
@@ -384,8 +397,8 @@ export class TeamBrain {
         if (mt.human && requested && (kind === 'feet' || (kind === 'through' && running))) u += 2 * ps.p;
         if (P.oneTwo && this.lastPass?.from === mt && this.lastPass.to === p && tick - this.lastPass.tick < 120) u += w.oneTwo * ps.p;
         if (mt.run && mt.run.until > tick) u += w.oneTwo * 0.5 * ps.p;
-        // al portero: como dejada bajo presión (niveles que la conocen) o en salida de balón
-        if (mt === this.keeper && !danger) u *= P.drop && pressure > 0.5 ? 0.9 : 0.35;
+        // atrás al último hombre: dejada bajo presión (niveles que la conocen) o para reiniciar
+        if (mt.job === 'support3' && !danger) u *= P.drop && pressure > 0.5 ? 1 : 0.6;
         // en zona de peligro solo pases seguros y nunca hacia la propia portería
         if (danger && (ps.p < 0.75 || (tx - ball.x) * a < -40)) continue;
         opts.push({ u, type: 'pass', mode, tx, ty, kind, to: mt, noise: P.passAim, kickAngle: P.align * 1.6 });
@@ -411,7 +424,6 @@ export class TeamBrain {
         const space = 1 / (1 + Math.exp(-(tO - timeToReach(p, qx, qy) - 6) / 8));
         let u = w.dribble * tr.dribble * value(qx, qy) * space * (1 - 0.6 * pressure) * align(qx, qy);
         if (calm && forward > -0.2) u += w.hold * space * (0.5 + 0.5 * forward);
-        if (p === this.keeper) u *= 0.6; // el portero con balón prefiere pasar
         opts.push({ u, type: 'dribble', mode: 'push', tx: ball.x + Math.cos(ang) * 120, ty: ball.y + Math.sin(ang) * 120 });
       }
       // amago: solo con el rival llegando (no encima) y de vez en cuando
@@ -516,10 +528,10 @@ export class TeamBrain {
     this.pinch(p);
   }
 
-  // ---------------- portero ----------------
+  // ---------------- último hombre ----------------
   // Punto que tapa el ángulo: sobre la bisectriz balón-postes a s = R / sen(α) del balón,
-  // con la profundidad limitada a [minDepth, gkMaxAdvance] (algo retrasado, como se pidió).
-  keeperSpot(ball, extra = 0) {
+  // con la profundidad limitada a [minDepth, lastManHold]. Lo usa el último hombre (3.º) en defensa.
+  shadowSpot(ball, extra = 0) {
     const { P } = this;
     const a = this.attack;
     const ogx = -a * W;
@@ -530,7 +542,9 @@ export class TeamBrain {
     const R = C.PLAYER_RADIUS + C.BALL_RADIUS + 4;
     let t = R / Math.max(0.05, Math.sin(alpha));
     const depthAt = (tt) => (ball.x + ux * tt - ogx) * a;
-    const maxDepth = P.gkMaxAdvance + this.adapt.gkBonus + extra;
+    // con el balón lejos (en campo rival) el último hombre espera más arriba, hacia el medio campo
+    const ballDepth = (ball.x - ogx) * a;
+    const maxDepth = Math.max(P.lastManHold, ballDepth - 380) + this.adapt.holdBonus + extra;
     const minDepth = 8;
     if (Math.abs(ux) > 0.05) {
       if (depthAt(t) > maxDepth) t = (ogx + a * maxDepth - ball.x) / ux;
@@ -545,12 +559,13 @@ export class TeamBrain {
     return { x: kx, y: ky, ux, uy, t, s: R / Math.max(0.05, Math.sin(alpha)) };
   }
 
-  keep(p) {
+  // Último hombre en defensa: sombra entre balón y portería; achica en el 1v1.
+  shadow(p) {
     const { P, ball } = this;
     const a = this.attack;
     const ogx = -a * W;
     const real = this.m.ball;
-    let K = this.keeperSpot(ball);
+    let K = this.shadowSpot(ball);
     // 1v1: rival con balón cerca y ningún defensa mejor colocado → achicar por la bisectriz
     if (this.owner && this.owner.team !== this.team) {
       const o = this.owner.disc;
@@ -574,6 +589,20 @@ export class TeamBrain {
     this.pinch(p);
   }
 }
+
+// Rotar atrás (el 1.º que acaba de actuar): volver detrás del balón por el lado alejado de la
+// jugada (palo lejano), sin cruzarse por delante. Al llegar deja de rotar y es el 3.º.
+TeamBrain.prototype.rotateBack = function rotateBack(p) {
+  const ball = this.ball;
+  const a = this.attack;
+  const far = p.rotating?.farPost ? (ball.y >= 0 ? -1 : 1) : Math.sign(p.disc.y || 1);
+  // detrás del último hombre actual (que así sube a 2.º) y detrás del balón
+  const others = this.players.filter((q) => q !== p).map((q) => q.disc.x * a);
+  const depth = Math.max(-W + 50, Math.min(ball.x * a - 150, -W + this.P.lastManDepth, Math.min(...others) - 25));
+  const tx = a * depth, ty = far * 95;
+  if (Math.hypot(p.disc.x - tx, p.disc.y - ty) < 40) p.rotating = null;
+  steer(p, tx, ty, 1, 12);
+};
 
 function minBy(arr, f) {
   let best = null, bv = Infinity;

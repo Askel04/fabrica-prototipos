@@ -15,7 +15,7 @@ function setup(levels, humanTeam = null) {
   return m;
 }
 
-// 1) Balón dividido delante del portero azul: ¿sale y lo toca él antes que el delantero rojo?
+// 1) Balón dividido delante del último hombre azul: ¿sale y lo toca él antes que el delantero rojo?
 function keeper50(level, runs = 40, strikerX = 150) {
   let wins = 0, cameOut = 0;
   for (let i = 0; i < runs; i++) {
@@ -25,19 +25,18 @@ function keeper50(level, runs = 40, strikerX = 150) {
     place(r2, -300, -120); place(r3, -300, 120);
     place(b1, 355, 0); place(b2, -200, -150); place(b3, -200, 150);
     Object.assign(m.ball, { x: 255, y: (Math.random() - 0.5) * 40, vx: 0.6, vy: 0 });
-    m.brains.blue.keeper = b1;
     let first = null, maxOut = 0;
     m.lastTouch = null;
     for (let t = 0; t < 120 && !first; t++) {
       m.step();
       maxOut = Math.max(maxOut, 370 - b1.disc.x);
-      if (m.lastTouch === b1) first = 'keeper';
+      if (m.lastTouch === b1) first = 'defender';
       else if (m.lastTouch === r1) first = 'striker';
     }
-    if (first === 'keeper') wins++;
+    if (first === 'defender') wins++;
     if (maxOut > 50) cameOut++;
   }
-  return { level, strikerX, keeperFirst: `${wins}/${runs}`, cameOut: `${cameOut}/${runs}` };
+  return { level, strikerX, ultimoHombreGana: `${wins}/${runs}`, cameOut: `${cameOut}/${runs}` };
 }
 
 // 2) Pedir el pase: el humano (rojo) pulsa tiro desmarcado; ¿cuánto tarda el compañero en dársela?
@@ -140,28 +139,51 @@ function kickAccuracy(level, runs = 100) {
   return { level, chutes: done, dentro3grados: `${Math.round((100 * within3) / Math.max(1, done))} %`, errorMedio: `${(sum / Math.max(1, done)).toFixed(1)}°` };
 }
 
-// 6) Vuelta del portero: el portero rojo está adelantado (líbero) y el azul roba en el centro.
-//    ¿Cuánto tarda en volver a menos de 30 de su sitio?
-function keeperReturn(level, runs = 30) {
-  let sum = 0, ok = 0;
-  for (let i = 0; i < runs; i++) {
-    const m = setup({ red: level, blue: 'easy' });
-    const [r1, k, r3, b1, b2, b3] = m.players;
-    place(k, -170, (Math.random() - 0.5) * 60); place(r1, 60, 80); place(r3, 80, -80);
-    place(b1, 20, 0); place(b2, 150, 100); place(b3, 340, 0);
-    Object.assign(m.ball, { x: -6, y: 0, vx: 0, vy: 0 });
-    m.brains.red.keeper = k;
-    m.lastTouch = b1;
-    for (let t = 0; t < 150; t++) {
-      m.step();
-      const K = m.brains.red.keeperSpot(m.ball);
-      if (Math.hypot(k.disc.x - K.x, k.disc.y - K.y) < 30) { sum += t; ok++; break; }
+// 6) Rotación en partido: rotaciones por minuto (el que tira/despeja o es superado vuelve atrás y
+//    los demás suben un puesto), % del tiempo en defensa con un último hombre por detrás del balón
+//    y de todos los rivales, y separación mínima entre compañeros en ataque (¿se amontonan?).
+function rotationStats(level, minutes = 12) {
+  const m = new Match({ humanTeam: null, levels: { red: level, blue: 'normal' } });
+  const red = m.players.filter((p) => p.team === 'red');
+  const pending = [];
+  let checked = 0, deepest = 0, farSide = 0, defT = 0, lastMan = 0, atkT = 0, spacing = 0;
+  for (let i = 0; i < 60 * 60 * minutes; i++) {
+    m.step();
+    const ball = m.ball, br = m.brains.red;
+    for (const p of red) {
+      if (p.rotateNow && p.rotateType === 'shot' && ball.x > 0 && !pending.some((q) => q.p === p)) pending.push({ p, t: m.tick + 120, by: ball.y });
+    }
+    for (let k = pending.length - 1; k >= 0; k--) {
+      const e = pending[k];
+      if (m.tick < e.t) continue;
+      pending.splice(k, 1);
+      if (m.state !== 'play') continue;
+      checked++;
+      const mostAdvanced = red.every((q) => q === e.p || e.p.disc.x >= q.disc.x);
+      if (!mostAdvanced && e.p.disc.x < ball.x - 60) deepest++;
+      if (Math.sign(e.p.disc.y) !== Math.sign(e.by) || Math.abs(e.by) < 30) farSide++;
+    }
+    if (m.state !== 'play') continue;
+    if (br.raw === 'defend') {
+      defT++;
+      // algún rojo por detrás del balón y de todos los atacantes rivales (último hombre)
+      const lastOpp = Math.min(...m.players.filter((q) => q.team === 'blue').map((q) => q.disc.x));
+      if (red.some((q) => q.disc.x < Math.min(ball.x, lastOpp))) lastMan++;
+    } else if (br.raw === 'attack') {
+      atkT++;
+      let min = Infinity;
+      for (let x = 0; x < 3; x++) for (let y = x + 1; y < 3; y++) min = Math.min(min, Math.hypot(red[x].disc.x - red[y].disc.x, red[x].disc.y - red[y].disc.y));
+      spacing += min;
     }
   }
-  return { level, vuelve: `${ok}/${runs}`, mediaTicks: ok ? Math.round(sum / ok) : null };
+  const pct = (n, d) => `${Math.round((100 * n) / Math.max(1, d))} %`;
+  return {
+    level, rotacionesPorMin: (m.stats.red.rotations / minutes).toFixed(1),
+    ultimoHombreEnDefensa: pct(lastMan, defT), separacionMinEnAtaque: Math.round(spacing / Math.max(1, atkT)),
+  };
 }
 
-console.log('1) Portero en balón dividido');
+console.log('1) Último hombre en balón dividido');
 for (const l of ['easy', 'normal', 'hard']) console.log('  ', JSON.stringify(keeper50(l)));
 // más igualado: delantero y portero a la misma distancia del balón
 for (const l of ['easy', 'normal', 'hard']) console.log('  ', JSON.stringify(keeper50(l, 40, 185)));
@@ -173,5 +195,5 @@ console.log('4) Presión');
 for (const l of ['easy', 'normal', 'hard']) console.log('  ', JSON.stringify(pressing(l)));
 console.log('5) Precisión de chute');
 for (const l of ['easy', 'normal', 'hard']) console.log('  ', JSON.stringify(kickAccuracy(l)));
-console.log('6) Vuelta del portero tras perder el balón');
-for (const l of ['normal', 'hard', 'mate']) console.log('  ', JSON.stringify(keeperReturn(l)));
+console.log('6) Rotación (12 min de partido contra Normal)');
+for (const l of ['easy', 'normal', 'hard', 'mate']) console.log('  ', JSON.stringify(rotationStats(l)));
