@@ -179,17 +179,19 @@ export class TeamBrain {
         jobs.set(p, bunch ? 'chase' : winning ? 'support' : 'cover');
       });
       // el último hombre sale a por el balón si gana la carrera con margen dentro de su zona
-      const tIt = itOf.get(third);
-      const fromGoal = Math.hypot(tIt.x + a * W, tIt.y);
-      const sweeps = tIt.seen && fromGoal < this.sweep() && tIt.t + P.sweepMarginTicks < tOpp && tIt.t < itOf.get(first).t;
-      jobs.set(third, sweeps ? 'chase' : 'shadow');
-      if (sweeps && third.job !== 'chase') m.stats[this.team].sweeps++;
+      if (third) { // (un equipo de 1 no tiene último hombre)
+        const tIt = itOf.get(third);
+        const fromGoal = Math.hypot(tIt.x + a * W, tIt.y);
+        const sweeps = tIt.seen && fromGoal < this.sweep() && tIt.t + P.sweepMarginTicks < tOpp && tIt.t < itOf.get(first).t;
+        jobs.set(third, sweeps ? 'chase' : 'shadow');
+        if (sweeps && third.job !== 'chase') m.stats[this.team].sweeps++;
+      }
       for (const p of lasts.slice(1)) jobs.set(p, 'cover'); // 5v5: el segundo central marca
     } else {
       jobs.set(first, 'press');
       const inTheirHalf = this.owner.disc.x * a > 0;
       others.forEach((p, i) => jobs.set(p, i === 0 && P.doublePress && inTheirHalf ? 'press2' : 'cover'));
-      jobs.set(third, 'shadow');
+      if (third) jobs.set(third, 'shadow');
       for (const p of lasts.slice(1)) jobs.set(p, 'cover');
     }
     // el que rota hacia atrás no hace otra cosa hasta llegar (salvo si es el único que puede ir al balón)
@@ -205,7 +207,7 @@ export class TeamBrain {
       p.job = job;
     }
     // estadística: profundidad media del último hombre con posesión
-    if (ours) {
+    if (ours && third) {
       m.stats[this.team].thirdDepth += Math.hypot(third.disc.x + a * W, third.disc.y);
       m.stats[this.team].thirdDepthN++;
     }

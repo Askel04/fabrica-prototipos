@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { CONFIG } from './config.js';
 import { GameScene } from './scenes/GameScene.js';
 import { MenuScene } from './scenes/MenuScene.js';
+import { TitleScene } from './scenes/TitleScene.js';
+import { LobbyScene } from './scenes/LobbyScene.js';
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -14,5 +16,5 @@ new Phaser.Game({
     width: CONFIG.WIDTH,
     height: CONFIG.HEIGHT,
   },
-  scene: [GameScene, MenuScene],
+  scene: [TitleScene, GameScene, MenuScene, LobbyScene],
 });

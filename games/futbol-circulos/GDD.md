@@ -1,6 +1,6 @@
 # GDD — futbol-circulos
 
-**Mecánica central:** fútbol 3v3 de círculos con física tipo Haxball. Te mueves con un joystick flotante y mantienes pulsado el chute: si el balón está a ≤ 4 unidades de tu borde, sale disparado. Sin chute, el balón se conduce por choque.
+**Mecánica central:** fútbol 3v3 (o 5v5 en campo grande) de círculos con física tipo Haxball. Te mueves con un joystick flotante y mantienes pulsado el chute: si el balón está a ≤ 4 unidades de tu borde, sale disparado. Sin chute, el balón se conduce por choque.
 
 **Giro:** la sensación de Haxball (inercia, conducción, chute "cargado" con el botón mantenido) llevada a táctil con dos pulgares, contra IA, en partidas instantáneas.
 
@@ -8,7 +8,11 @@
 
 **Bucle de sesión:** partido sin fin en el prototipo (marcador continuo). Si divierte: partidos a 3 goles o 3 minutos con revancha inmediata.
 
-**Meta:** ninguna en el prototipo. Posible: ligas contra IA de dificultad creciente, después online.
+**Meta:** ninguna en el prototipo. Posible: ligas contra IA de dificultad creciente.
+
+**Modos:** menú principal con Un jugador (3v3 en el estadio clásico 740x340 o 5v5 en el grande 1100x480; dificultad) y Online.
+
+**Online (como Haxball, sin servidor ni base de datos propios):** solo funciona abriendo el artefacto en claude.ai (capacidad `room`); los amigos necesitan cuenta y que se les comparta el artefacto. Uno crea sala (código de 5 letras) y los demás se unen con él. En la sala cada uno elige Rojo/Azul/Espectador; el anfitrión elige 3v3/5v5, rellenar con bots o no (1v1, 2v2, 1v2… solo personas) y su dificultad. Anfitrión con autoridad: simula todo y publica instantáneas a 30/s por `presence`; los clientes mandan su mando por `presence` y dibujan interpolando ~80 ms (sin predicción local todavía). Si alguien se va, su puesto pasa a bot; si se va el anfitrión, se acaba. `?localnet` en la URL usa BroadcastChannel para probar con dos pestañas.
 
 **Controles (menú de pausa, arriba a la izquierda):** Joystick `Móvil` (aparece donde pones el pulgar) o `Fijo` (esquina inferior izquierda); Tiro `Tocar` (mantener en la mitad derecha) o `Botón` (botón gris abajo a la derecha). Se guardan en localStorage.
 

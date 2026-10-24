@@ -5,18 +5,40 @@ import { TouchControls } from '../input.js';
 import { settings } from '../settings.js';
 import { Match, DT_MS } from '../sim/match.js';
 import { MODES } from '../stadium.js';
+import { encodeSnap, decodeSnap } from '../net/session.js';
+
+const SNAP_EVERY = 2; // el anfitrión publica una instantánea cada 2 ticks (30/s)
+const INTERP_DELAY = 5; // el cliente dibuja ~5 ticks (83 ms) por detrás de la última instantánea
 
 export class GameScene extends Phaser.Scene {
   constructor() {
     super('Game');
   }
 
+  // data.net: sesión online. Anfitrión = simula y publica; cliente = solo dibuja lo que recibe.
+  init(data) {
+    this.net = data?.net || null;
+    this.role = !this.net ? 'solo' : this.net.isHost ? 'host' : 'client';
+  }
+
   create() {
     this.debug = C.DEBUG || new URLSearchParams(location.search).has('debug');
 
     // la simulación (física, reglas e IA) vive en Match; la escena solo dibuja y lee los controles
-    const mode = MODES[settings.mode] || MODES['3v3'];
-    this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty }, ...mode });
+    if (this.net) {
+      const L = (this.lobby = this.net.currentLobby());
+      this.gameId = L.game;
+      this.match = new Match({
+        seats: L.seats.map(([key, team, name]) => ({ key, team, name })),
+        bots: L.bots, levels: { red: L.diff, blue: L.diff }, localKey: this.net.me, ...MODES[L.mode],
+      });
+    } else {
+      const mode = MODES[settings.mode] || MODES['3v3'];
+      this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty }, ...mode });
+    }
+    this.seq = { kick: 0, kicker: 0, post: 0 }; // contadores de eventos para los clientes
+    this.snaps = [];
+    this.lastSent = null;
     this.world = this.match.world;
     this.ball = this.match.ball;
     this.players = this.match.players;
@@ -24,15 +46,20 @@ export class GameScene extends Phaser.Scene {
     this.acc = 0;
     this.lastPostSound = 0;
     this.match.events = {
-      kick: (p) => this.onKick(p),
+      kick: (p) => {
+        this.seq.kick++;
+        this.seq.kicker = p.id;
+        this.onKick(p);
+      },
       goal: (scorer) => this.onGoal(scorer),
       post: () => {
         if (this.match.tick - this.lastPostSound > 10 && Math.hypot(this.ball.vx, this.ball.vy) > 1.5) {
           this.lastPostSound = this.match.tick;
-          beep(C.SOUND_POST, C.SOUND_DURATION * 2);
+          this.seq.post++;
+          this.onPost();
         }
       },
-      passRequest: () => this.onPassRequest(),
+      passRequest: (h) => this.onPassRequest(h),
     };
 
     this.drawField();
@@ -40,7 +67,12 @@ export class GameScene extends Phaser.Scene {
     for (const p of this.players) {
       p.color = p.team === 'red' ? C.COLOR_RED : C.COLOR_BLUE;
       p.gfx = this.add.circle(0, 0, C.PLAYER_RADIUS, p.color).setStrokeStyle(C.BORDER_WIDTH, C.COLOR_BORDER).setDepth(10);
-      if (p.human) {
+      if (this.net && p.human) {
+        p.nameText = this.add.text(0, 0, p.name, {
+          fontFamily: 'sans-serif', fontSize: '12px', fontStyle: 'bold', color: '#ffffff', stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5, 1).setDepth(12);
+      }
+      if (p === this.match.human) {
         this.human = p;
         p.ring = this.add.circle(0, 0, C.PLAYER_RADIUS + C.KICK_DIST, 0, 0)
           .setStrokeStyle(2, 0xffffff, 1).setAlpha(C.RING_ALPHA_IDLE).setDepth(9);
@@ -70,15 +102,21 @@ export class GameScene extends Phaser.Scene {
       }).setOrigin(0.5, 1).setDepth(30));
     }
     this.createPauseButton();
-    this.controls = new TouchControls(this, (p) => this.inPauseButton(p));
+    this.controls = new TouchControls(this, (p) => this.menuOpen || this.inPauseButton(p));
     this.applySettings();
     // cámara de interfaz sin zoom (marcador, pausa, controles); la principal solo ve el campo
     const ui = [this.scoreText, this.fpsText, this.pauseBtn, this.controls.gfx].filter(Boolean);
     this.uiCam = this.cameras.add(0, 0, this.scale.gameSize.width, this.scale.gameSize.height);
     this.uiCam.ignore(this.children.list.filter((o) => !ui.includes(o)));
     this.cameras.main.ignore(ui);
-    this.events.on('resume', () => this.applySettings());
-    this.scale.on('resize', () => this.layout());
+    const onResume = () => this.applySettings();
+    const onResize = () => this.layout();
+    this.events.on('resume', onResume);
+    this.scale.on('resize', onResize);
+    this.events.once('shutdown', () => {
+      this.events.off('resume', onResume);
+      this.scale.off('resize', onResize);
+    });
     this.layout();
     this.input.once('pointerdown', () => {
       try {
@@ -104,6 +142,7 @@ export class GameScene extends Phaser.Scene {
 
   applySettings() {
     this.controls.setModes(settings.joystick, settings.kick);
+    if (this.net) return;
     this.difficulty = settings.difficulty;
     this.match.levels.blue = settings.difficulty;
   }
@@ -136,8 +175,31 @@ export class GameScene extends Phaser.Scene {
 
   openMenu() {
     this.controls.release();
+    if (this.net) {
+      // online: el partido sigue (para los demás y para ti)
+      this.menuOpen = true;
+      this.scene.launch('Menu', { online: true, host: this.role === 'host' });
+      return;
+    }
     this.scene.pause();
     this.scene.launch('Menu');
+  }
+
+  closeMenu() {
+    this.menuOpen = false;
+    this.applySettings();
+  }
+
+  // salir: solo → menú principal; anfitrión → todos a la sala; cliente → deja la sala
+  quit(notice = '') {
+    if (this.role === 'host') {
+      this.net.setLobby({ phase: 'lobby' });
+      this.net.room.presence({ s: null });
+      this.scene.start('Lobby');
+    } else if (this.role === 'client') {
+      this.net.leave();
+      this.scene.start('Title', { notice });
+    } else this.scene.start('Title');
   }
 
   drawField() {
@@ -177,6 +239,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
+    if (this.role === 'client') return this.clientUpdate(time, delta);
+    if (this.role === 'host') this.hostReadPeers();
     this.acc += Math.min(delta, 250);
     let n = 0;
     while (this.acc >= DT_MS && n < C.MAX_TICKS_PER_FRAME) {
@@ -192,12 +256,123 @@ export class GameScene extends Phaser.Scene {
     this.match.humanInput.x = this.controls.dirX;
     this.match.humanInput.y = this.controls.dirY;
     this.match.humanInput.kick = this.controls.kick;
+    if (this.role === 'host') {
+      for (const p of this.match.humans) {
+        if (p.key === this.net.me) continue;
+        const inp = this.net.inputOf(p.key);
+        if (inp) this.match.setInput(p.key, inp);
+      }
+    }
     this.match.step();
+    if (this.role === 'host' && this.match.tick % SNAP_EVERY === 0) this.net.publishSnap(encodeSnap(this.match, this.seq));
+  }
+
+  // ---------------- online ----------------
+  // anfitrión: quien se va de la sala deja su puesto a un bot (o quieto, si se juega sin bots)
+  hostReadPeers() {
+    const here = new Set(this.net.peers().map((p) => p.peer));
+    for (const p of [...this.match.humans]) {
+      if (p.key === this.net.me || here.has(p.key)) continue;
+      if (this.lobby.bots) {
+        this.match.makeBot(p);
+        p.nameText?.setText('bot');
+      } else this.match.setInput(p.key, { x: 0, y: 0, kick: false });
+    }
+  }
+
+  // cliente: manda su mando, recibe instantáneas del anfitrión y dibuja interpolando
+  clientUpdate(time, delta) {
+    const net = this.net;
+    const host = net.hostPeer();
+    if (!host) {
+      this.hostMissingSince ??= time;
+      if (time - this.hostMissingSince > 4000) this.quit('El anfitrión se ha ido.');
+    } else this.hostMissingSince = null;
+    const L = net.currentLobby();
+    if (L && (L.phase !== 'play' || L.game !== this.gameId)) {
+      this.scene.start(L.phase === 'play' ? 'Game' : 'Lobby', { net });
+      return;
+    }
+
+    // mando: el chute se mantiene al menos 120 ms para que el anfitrión no se lo pierda
+    if (this.match.human) {
+      if (this.controls.kick) this.kickUntil = time + 120;
+      const kick = this.controls.kick || time < (this.kickUntil || 0);
+      const r = (v) => Math.round(v * 100) / 100;
+      const inp = [r(this.controls.dirX), r(this.controls.dirY), kick ? 1 : 0];
+      if (!this.lastSent || inp.some((v, i) => v !== this.lastSent[i])) {
+        net.sendInput(...inp);
+        this.lastSent = inp;
+      }
+      this.match.human.input.kick = kick;
+    }
+
+    // instantáneas nuevas
+    const raw = host?.presence.s;
+    if (raw && raw !== this.lastRaw) {
+      this.lastRaw = raw;
+      const snap = decodeSnap(raw, this.players.length);
+      const last = this.snaps[this.snaps.length - 1];
+      if (snap && (!last || snap.tick > last.tick)) {
+        this.applyEvents(last, snap);
+        this.snaps.push(snap);
+        if (this.snaps.length > 30) this.snaps.shift();
+        if (this.renderTick === undefined || Math.abs(snap.tick - INTERP_DELAY - this.renderTick) > 40) this.renderTick = snap.tick - INTERP_DELAY;
+      }
+    }
+    if (!this.snaps.length) return this.render(1);
+    // reloj de dibujo: avanza con el tiempo local y se corrige poco a poco hacia la última instantánea
+    const latest = this.snaps[this.snaps.length - 1].tick;
+    this.renderTick += Math.min(delta, 250) / DT_MS;
+    this.renderTick += (latest - INTERP_DELAY - this.renderTick) * 0.05;
+    const t = Math.min(this.renderTick, latest);
+    let i = this.snaps.findIndex((s) => s.tick >= t);
+    if (i <= 0) i = Math.max(0, i) || 0;
+    const b = this.snaps[i], a = this.snaps[Math.max(0, i - 1)];
+    const k = b.tick > a.tick ? Math.max(0, Math.min(1, (t - a.tick) / (b.tick - a.tick))) : 1;
+    const set = (d, A, B) => {
+      d.x = d.px = A.x + (B.x - A.x) * k;
+      d.y = d.py = A.y + (B.y - A.y) * k;
+    };
+    set(this.ball, a.ball, b.ball);
+    this.players.forEach((p, j) => {
+      set(p.disc, a.players[j], b.players[j]);
+      if (p !== this.match.human) p.input.kick = b.players[j].kick;
+    });
+    this.render(1);
+  }
+
+  // efectos (sonido, vibración, marcador) a partir de los contadores de la instantánea
+  applyEvents(prev, snap) {
+    const m = this.match;
+    m.state = snap.state;
+    if (!prev) {
+      Object.assign(this.score, snap.score);
+      this.updateScore();
+      return;
+    }
+    if (snap.kick !== prev.kick && this.players[snap.kicker]) this.onKick(this.players[snap.kicker]);
+    if (snap.post !== prev.post) this.onPost();
+    for (const team of ['red', 'blue']) {
+      if (snap.score[team] > this.score[team]) {
+        Object.assign(this.score, snap.score);
+        this.onGoal(team);
+      }
+    }
+    if (snap.score.red !== this.score.red || snap.score.blue !== this.score.blue) {
+      Object.assign(this.score, snap.score);
+      this.updateScore();
+    }
+  }
+
+  onPost() {
+    beep(C.SOUND_POST, C.SOUND_DURATION * 2);
   }
 
   // el humano pidió el pase: destello en su anillo
-  onPassRequest() {
-    const ring = this.human.ring;
+  onPassRequest(h) {
+    if (h !== this.human) return;
+    const ring = h.ring;
     this.tweens.add({ targets: ring, scale: { from: 1.9, to: 1 }, duration: 260, ease: 'Quad.Out' });
     beep(C.SOUND_KICK * 1.5, 0.04);
   }
@@ -208,8 +383,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   onKick(p) {
-    beep(C.SOUND_KICK + (p.human ? 0 : -120), C.SOUND_DURATION);
-    if (p.human) {
+    const mine = p === this.match.human;
+    beep(C.SOUND_KICK + (mine ? 0 : -120), C.SOUND_DURATION);
+    if (mine) {
       navigator.vibrate?.(C.VIBRATE_MS);
       this.tweens.add({ targets: p.ring, scale: { from: 1.5, to: 1 }, duration: 120, ease: 'Quad.Out' });
     }
@@ -273,10 +449,11 @@ export class GameScene extends Phaser.Scene {
     const lerp = (d, o) => o.setPosition(d.px + (d.x - d.px) * alpha, d.py + (d.y - d.py) * alpha);
     lerp(this.ball, this.ballGfx);
     for (const p of this.players) lerp(p.disc, p.gfx);
+    for (const p of this.players) p.nameText?.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 3);
     const h = this.human;
-    h.ring.setPosition(h.gfx.x, h.gfx.y).setAlpha(h.input.kick ? C.RING_ALPHA_KICK : C.RING_ALPHA_IDLE);
+    h?.ring.setPosition(h.gfx.x, h.gfx.y).setAlpha(h.input.kick ? C.RING_ALPHA_KICK : C.RING_ALPHA_IDLE);
     this.controls.draw();
-    if (this.dbgGfx) this.drawDebug();
+    if (this.dbgGfx && this.role !== 'client') this.drawDebug();
     if (this.fpsText) {
       const b = this.ball;
       this.fpsText.setText(`FPS ${this.game.loop.actualFps.toFixed(0)}  v ${Math.hypot(b.vx, b.vy).toFixed(2)}  ${this.match.state}`);

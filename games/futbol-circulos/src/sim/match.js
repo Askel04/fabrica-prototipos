@@ -25,8 +25,10 @@ export class Match {
   // seats: humanos [{ team: 'red'|'blue', key, name }] (el resto de puestos son bots).
   //   Atajo: humanTeam 'red' = un humano local en rojo; null = todos bots.
   // levels: { red, blue } nombres de CONFIG.AI_LEVELS para los bots de cada equipo.
+  // bots: false = cada equipo solo con sus humanos (online 1v1, 2v2, 1v2…).
+  // localKey: puesto que maneja esta pantalla (anillo y controles).
   constructor({ humanTeam = 'red', seats = null, teamSize = 3, stadium = 'classic',
-    levels = { red: 'mate', blue: 'normal' }, weights = null } = {}) {
+    levels = { red: 'mate', blue: 'normal' }, weights = null, bots = true, localKey = 'local' } = {}) {
     setStadium(stadium);
     syncField();
     this.teamSize = teamSize;
@@ -39,7 +41,8 @@ export class Match {
     this.inputs = new Map();
     for (const [team, attack] of [['red', 1], ['blue', -1]]) {
       const humans = seats.filter((s) => s.team === team).slice(0, teamSize);
-      for (let i = 0; i < teamSize; i++) {
+      const n = bots ? teamSize : humans.length;
+      for (let i = 0; i < n; i++) {
         const seat = humans[i];
         const disc = makeDisc(0, 0, C.PLAYER_RADIUS, C.PLAYER_INV_MASS, C.PLAYER_DAMPING, C.PLAYER_BCOEF);
         this.players.push({
@@ -53,7 +56,7 @@ export class Match {
       }
     }
     // el humano local (si lo hay) es el que dibuja la escena con anillo y controles
-    this.human = this.players.find((p) => p.key === 'local') || null;
+    this.human = this.players.find((p) => p.key === localKey) || null;
     this.humans = this.players.filter((p) => p.human);
     this.world.discs.push(...this.players.map((p) => p.disc), this.ball);
     this.brains = {
@@ -61,7 +64,7 @@ export class Match {
       blue: new TeamBrain(this, 'blue', weights),
     };
     this.levels = { ...levels };
-    this.humanInput = this.inputs.get('local') || { x: 0, y: 0, kick: false };
+    this.humanInput = this.inputs.get(localKey) || { x: 0, y: 0, kick: false };
     this.events = {}; // kick(p), goal(scorer), post(), passRequest()
     this.score = { red: 0, blue: 0 };
     this.stats = {
@@ -173,6 +176,14 @@ export class Match {
   setInput(key, inp) {
     const cur = this.inputs.get(key);
     if (cur) Object.assign(cur, inp);
+  }
+
+  // un humano se fue: su puesto pasa a la IA
+  makeBot(p) {
+    p.human = false;
+    p.input.kick = false;
+    this.humans = this.humans.filter((h) => h !== p);
+    this.inputs.delete(p.key);
   }
 
   readHuman(h) {
