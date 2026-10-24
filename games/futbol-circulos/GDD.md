@@ -13,7 +13,7 @@
 **Controles (menú de pausa, arriba a la izquierda):** Joystick `Móvil` (aparece donde pones el pulgar) o `Fijo` (esquina inferior izquierda); Tiro `Tocar` (mantener en la mitad derecha) o `Botón` (botón gris abajo a la derecha). Se guardan en localStorage.
 
 **IA (según el informe "IA de CPU en juegos deportivos"):** IA clásica por capas, como GRF/FIFA/2K:
-- Percepción con retardo (balón y rivales) y ruido → estado de equipo con histéresis (posesión clara / sin posesión / suelto) → roles por tiempo de intercepción (presionador, cobertura, apoyos, portero) → steering.
+- Percepción con retardo (balón y rivales) y ruido → estado de equipo con histéresis (posesión clara / sin posesión / suelto) → rotación 1.º/2.º/3.º por tiempo de intercepción → steering.
 - Con balón: utilidad (tiro al mayor hueco angular, pases al pie/al espacio/a la banda con seguridad por tiempos, conducción hacia el espacio que controla, despeje) + softmax con temperatura y tiempo mínimo de compromiso. Rasgos de personalidad (tirador, pasador, regateador).
 - Sin balón: puntos de apoyo puntuados (Buckland + control de espacio de Spearman) con asignación voraz e histéresis; paredes; pedir pase pulsando tiro lejos del balón.
 - **Sin portero: rotación como en Rocket League 3v3.** Los tres son iguales y van cambiando de puesto: 1.º (el que llega antes: conduce, disputa o presiona), 2.º (apoyo para el pase / corta la línea de pase) y 3.º (último hombre: equilibrio con posesión, sombra en la línea balón-portería sin ella; sale a por el balón si gana la carrera). Quien tira, despeja o es superado rota atrás por el lado alejado de la jugada y los demás suben un puesto. Con el balón en campo rival el 3.º espera hacia el medio campo. El humano cuenta en la rotación.
