@@ -3,7 +3,11 @@
 import { CONFIG as C } from '../config.js';
 import { CONTACT, norm, segDist } from './skills.js';
 
-const W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
+// medidas del campo actual (las actualiza syncEvaluate al cambiar de estadio)
+let W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
+export function syncEvaluate() {
+  W = C.FIELD_W; H = C.FIELD_H; G = C.GOAL_HALF;
+}
 const RB = C.BALL_RADIUS;
 export const KICK_SPEED = C.KICK_STRENGTH * C.BALL_INV_MASS;
 export const PUSH_SPEED = 2.2; // velocidad típica del balón tras un empujón en carrera
@@ -150,7 +154,7 @@ export function bestShot(ball, opps, attack, n = 9) {
 export function threat(x, y, attack) {
   const d = Math.hypot(attack * W - x, y);
   const centred = 1 - 0.5 * Math.min(1, Math.abs(y) / H);
-  return Math.exp(-d / 230) * centred;
+  return Math.exp(-d / (230 * (W / 370))) * centred;
 }
 
 // Probabilidad rápida de que un pase a (x, y) llegue (línea libre de rivales y distancia razonable).

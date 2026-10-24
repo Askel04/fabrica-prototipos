@@ -16,8 +16,17 @@ import { levelParams } from './params.js';
 import { perceive } from './perception.js';
 import { assignSpots } from './support.js';
 import TRAINED from './weights.js';
+import { fieldScale } from '../stadium.js';
+import { syncEvaluate } from './evaluate.js';
+import { syncSupport } from './support.js';
 
-const W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
+// medidas del campo actual (cambian con el estadio; Match llama a syncField al crear el partido)
+let W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
+export function syncField() {
+  W = C.FIELD_W; H = C.FIELD_H; G = C.GOAL_HALF;
+  syncEvaluate();
+  syncSupport();
+}
 const ticks = (ms) => Math.max(1, Math.round((ms * C.TICK_HZ) / 1000));
 
 // Pesos de las utilidades (tools/train.mjs puede reajustarlos y guardarlos en weights.js).
@@ -152,34 +161,43 @@ export class TeamBrain {
 
     // ---- rotación 1.º / 2.º / 3.º (como en Rocket League 3v3, sin portero) ----
     const ours = phase === 'attack' && this.owner && this.owner.team === this.team;
-    const { first, second, third } = this.assignRotation(ours ? this.owner : null, itOf);
-    this.rot = { first, second, third };
+    const { first, others, lasts } = this.assignRotation(ours ? this.owner : null, itOf);
+    const second = others[0] || lasts[1] || lasts[0], third = lasts[0];
+    this.rot = { first, second, third, others, lasts };
 
     const jobs = new Map();
     if (ours) {
       jobs.set(first, 'carry');
-      jobs.set(second, 'support');
-      jobs.set(third, 'support3');
+      for (const p of others) jobs.set(p, 'support');
+      for (const p of lasts) jobs.set(p, 'support3');
     } else if (phase === 'loose' || !this.owner || this.owner.team === this.team || raw === 'loose') {
       jobs.set(first, 'chase');
       const winning = itOf.get(first).t + 6 < tOpp;
-      // nivel bajo: el segundo también va al balón (se amontonan)
-      const bunch = P.bunch && Math.hypot(second.disc.x - ball.x, second.disc.y - ball.y) < 140;
-      jobs.set(second, bunch ? 'chase' : winning ? 'support' : 'cover');
+      others.forEach((p, i) => {
+        // nivel bajo: el más cercano también va al balón (se amontonan)
+        const bunch = i === 0 && P.bunch && Math.hypot(p.disc.x - ball.x, p.disc.y - ball.y) < 140 * fieldScale();
+        jobs.set(p, bunch ? 'chase' : winning ? 'support' : 'cover');
+      });
       // el último hombre sale a por el balón si gana la carrera con margen dentro de su zona
       const tIt = itOf.get(third);
       const fromGoal = Math.hypot(tIt.x + a * W, tIt.y);
-      const sweeps = tIt.seen && fromGoal < P.sweep && tIt.t + P.sweepMarginTicks < tOpp && tIt.t < itOf.get(first).t;
+      const sweeps = tIt.seen && fromGoal < this.sweep() && tIt.t + P.sweepMarginTicks < tOpp && tIt.t < itOf.get(first).t;
       jobs.set(third, sweeps ? 'chase' : 'shadow');
       if (sweeps && third.job !== 'chase') m.stats[this.team].sweeps++;
+      for (const p of lasts.slice(1)) jobs.set(p, 'cover'); // 5v5: el segundo central marca
     } else {
       jobs.set(first, 'press');
       const inTheirHalf = this.owner.disc.x * a > 0;
-      jobs.set(second, P.doublePress && inTheirHalf ? 'press2' : 'cover');
+      others.forEach((p, i) => jobs.set(p, i === 0 && P.doublePress && inTheirHalf ? 'press2' : 'cover'));
       jobs.set(third, 'shadow');
+      for (const p of lasts.slice(1)) jobs.set(p, 'cover');
     }
     // el que rota hacia atrás no hace otra cosa hasta llegar (salvo si es el único que puede ir al balón)
-    for (const p of [second, third]) if (p.rotating && p.rotating.until > m.tick && jobs.get(p) !== 'chase') jobs.set(p, 'rotate');
+    for (const p of [...others, ...lasts]) if (p.rotating && p.rotating.until > m.tick && jobs.get(p) !== 'chase') jobs.set(p, 'rotate');
+    // marcajes: cada jugador que cubre se queda con un rival peligroso distinto
+    const covers = [...others, ...lasts].filter((p) => jobs.get(p) === 'cover');
+    const list = this.dangerList();
+    covers.forEach((p) => { p.markTarget = list.shift() || null; });
 
     for (const p of ais) {
       const job = jobs.get(p) || 'support';
@@ -194,9 +212,9 @@ export class TeamBrain {
     this.updateSpots();
   }
 
-  // Orden de la rotación. 1.º = el que llega antes al balón (o el poseedor). 3.º = el más
-  // retrasado de los otros dos, siempre una IA si es posible (garantiza un último hombre).
-  // Con histéresis para no bailar, y el que acaba de actuar rota atrás y pasa a ser 3.º.
+  // Orden de la rotación. 1.º = el que llega antes al balón (o el poseedor). Último hombre = el más
+  // retrasado del resto, siempre una IA si es posible (en 5v5 desde Normal, dos centrales).
+  // Con histéresis para no bailar; el que acaba de actuar rota atrás y pasa a ser el último.
   assignRotation(owner, itOf) {
     const { P, m } = this;
     const a = this.attack;
@@ -227,11 +245,19 @@ export class TeamBrain {
     if (first !== pf) first.firstSince = m.tick;
     if (first.rotating) first.rotating = null;
     const rest = team.filter((p) => p !== first);
-    // 3.º: el que está rotando, si no el más retrasado (con histéresis); preferiblemente una IA
-    const depth = (p) => p.disc.x * a - (p === prev.third ? P.rotHyst * 2 : 0) - (p.rotating ? 1000 : 0) + (p.human ? 60 : 0);
-    const third = minBy(rest, depth);
-    const second = rest.find((p) => p !== third) || third;
-    return { first, second, third };
+    // últimos: los que están rotando, si no los más retrasados (con histéresis); preferiblemente IA
+    const prevLasts = prev.lasts || [];
+    const depth = (p) => p.disc.x * a - (prevLasts.includes(p) ? P.rotHyst * 2 : 0) - (p.rotating ? 1000 : 0) + (p.human ? 60 : 0);
+    const sorted = [...rest].sort((x, y) => depth(x) - depth(y));
+    const nLast = team.length >= 5 && P.theta >= 0.3 ? 2 : 1;
+    const lasts = sorted.slice(0, Math.min(nLast, Math.max(1, rest.length - 1)));
+    const others = rest.filter((p) => !lasts.includes(p));
+    return { first, others, lasts };
+  }
+
+  // zona de salida del último hombre, escalada con el ancho de portería del estadio
+  sweep() {
+    return this.P.sweep * (G / 64);
   }
 
   updateSpots() {
@@ -314,7 +340,8 @@ export class TeamBrain {
     const done = act && ((act.mode === 'kick' && p.lastKick > act.start) ||
       (act.mode === 'push' && act.type !== 'dribble' && edgeToBall(p, ball) > 14 && m.tick - act.start > 8));
     if (done && act.type === 'pass') this.afterPass(p, act);
-    const requested = m.passRequestTick > (act?.start ?? -1) && m.tick - m.passRequestTick < 90 && p.team === m.human?.team;
+    const req = m.passRequests?.[p.team] ?? -1e9;
+    const requested = req > (act?.start ?? -1) && m.tick - req < 90;
     if (!act || done || m.tick > act.until || requested) p.act = this.decide(p);
     this.execute(p, p.act);
   }
@@ -360,14 +387,14 @@ export class TeamBrain {
     const pressure = Math.max(0, Math.min(1, 1 - (tOpp - 10) / 40));
     // zona de peligro: cerca de la propia portería, o en el propio tercio con un rival encima
     const ownThird = ball.x * a < -W * 0.35;
-    const danger = fromOwnGoal < 150 || (ownThird && pressure > 0.4);
-    const requested = p.team === m.human?.team && tick - m.passRequestTick < 90;
+    const k = fieldScale();
+    const danger = fromOwnGoal < 150 * k || (ownThird && pressure > 0.4);
     const value = (x, y) => threat(x, y, a) + 0.15;
 
     // tiro al centro del mayor hueco libre
     if (!danger) {
       const s = bestShot(ball, opps, a);
-      if (s.dist < 380 && s.quality > 0) {
+      if (s.dist < 380 * k && s.quality > 0) {
         opts.push({ u: w.shot * tr.shot * s.quality * align(s.x, s.y), type: 'shot', mode: 'kick', tx: s.x, ty: s.y, noise: P.aim, kickAngle: P.align });
       }
     }
@@ -394,7 +421,8 @@ export class TeamBrain {
         let u = w.pass * tr.pass * ps.p * value(ps.x, ps.y) * align(tx, ty);
         if (mt.human) u += w.human * ps.p;
         const running = mt.disc.vx * a > 0.8;
-        if (mt.human && requested && (kind === 'feet' || (kind === 'through' && running))) u += 2 * ps.p;
+        const requested = mt.human && tick - mt.passRequestTick < 90; // ese humano pidió el pase
+        if (requested && (kind === 'feet' || (kind === 'through' && running))) u += 2 * ps.p;
         if (P.oneTwo && this.lastPass?.from === mt && this.lastPass.to === p && tick - this.lastPass.tick < 120) u += w.oneTwo * ps.p;
         if (mt.run && mt.run.until > tick) u += w.oneTwo * 0.5 * ps.p;
         // atrás al último hombre: dejada bajo presión (niveles que la conocen) o para reiniciar
@@ -444,16 +472,21 @@ export class TeamBrain {
   // ---------------- sin balón, defendiendo ----------------
   // rival más peligroso sin balón: amenaza de su zona × que le pueda llegar el pase
   dangerous(self) {
+    return this.dangerList(self)[0] || null;
+  }
+
+  // rivales sin balón ordenados de más a menos peligrosos
+  dangerList(self = null) {
     const { ball } = this;
     const blockers = this.players.filter((q) => q !== self);
-    let best = null, bv = -1;
+    const out = [];
     for (const o of this.oppsV) {
       if (this.owner && o.ref === this.owner.ref) continue;
       let v = threat(o.disc.x, o.disc.y, -this.attack) * (0.3 + laneProb(ball.x, ball.y, o.disc.x, o.disc.y, blockers));
       if (this.adapt.biasY && Math.abs(o.disc.y - this.adapt.biasY) < 70) v *= 1.3;
-      if (v > bv) { bv = v; best = o; }
+      out.push({ o, v });
     }
-    return best;
+    return out.sort((x, y) => y.v - x.v).map((e) => e.o);
   }
 
   // Presionador: por el lado de su portería, desviado hacia la línea de pase más peligrosa.
@@ -501,7 +534,7 @@ export class TeamBrain {
     const { P, ball } = this;
     const a = this.attack;
     const ogx = -a * W;
-    const r = this.dangerous(p);
+    const r = p.markTarget !== undefined ? p.markTarget : this.dangerous(p);
     const ballFromGoal = Math.hypot(ball.x - ogx, ball.y);
     let tx, ty;
     if (r && Math.hypot(r.disc.x - ogx, r.disc.y) < ballFromGoal + 40) {
@@ -544,7 +577,7 @@ export class TeamBrain {
     const depthAt = (tt) => (ball.x + ux * tt - ogx) * a;
     // con el balón lejos (en campo rival) el último hombre espera más arriba, hacia el medio campo
     const ballDepth = (ball.x - ogx) * a;
-    const maxDepth = Math.max(P.lastManHold, ballDepth - 380) + this.adapt.holdBonus + extra;
+    const maxDepth = Math.max(P.lastManHold * (G / 64), ballDepth - 380 * fieldScale()) + this.adapt.holdBonus + extra;
     const minDepth = 8;
     if (Math.abs(ux) > 0.05) {
       if (depthAt(t) > maxDepth) t = (ogx + a * maxDepth - ball.x) / ux;
@@ -598,7 +631,8 @@ TeamBrain.prototype.rotateBack = function rotateBack(p) {
   const far = p.rotating?.farPost ? (ball.y >= 0 ? -1 : 1) : Math.sign(p.disc.y || 1);
   // detrás del último hombre actual (que así sube a 2.º) y detrás del balón
   const others = this.players.filter((q) => q !== p).map((q) => q.disc.x * a);
-  const depth = Math.max(-W + 50, Math.min(ball.x * a - 150, -W + this.P.lastManDepth, Math.min(...others) - 25));
+  const k = fieldScale();
+  const depth = Math.max(-W + 50, Math.min(ball.x * a - 150 * k, -W + this.P.lastManDepth * k, Math.min(...others) - 25));
   const tx = a * depth, ty = far * 95;
   if (Math.hypot(p.disc.x - tx, p.disc.y - ty) < 40) p.rotating = null;
   steer(p, tx, ty, 1, 12);

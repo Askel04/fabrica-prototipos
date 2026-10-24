@@ -2,43 +2,66 @@
 // y las herramientas de entrenamiento y pruebas (Node).
 import { CONFIG as C } from '../config.js';
 import { World, makeDisc } from '../physics.js';
-import { TeamBrain } from '../ai/brain.js';
+import { TeamBrain, syncField } from '../ai/brain.js';
+import { setStadium, fieldScale } from '../stadium.js';
 
 export const DT_MS = 1000 / C.TICK_HZ;
 export const ms2ticks = (ms) => Math.max(1, Math.round(ms / DT_MS));
 
-// Posiciones de saque (x relativa a la propia portería: negativa = propia mitad)
+// Posiciones de saque (x negativa = propia mitad; se escalan con el campo). 3v3 y 5v5.
 const KICKOFF_SPOTS = {
-  kicker: [[-40, 0], [-180, -90], [-180, 90]],
-  other: [[-140, 0], [-250, -70], [-250, 70]],
+  3: {
+    kicker: [[-40, 0], [-180, -90], [-180, 90]],
+    other: [[-140, 0], [-250, -70], [-250, 70]],
+  },
+  5: {
+    kicker: [[-40, 0], [-150, -120], [-150, 120], [-280, -60], [-280, 60]],
+    other: [[-120, 0], [-170, -130], [-170, 130], [-290, -60], [-290, 60]],
+  },
 };
 
 export class Match {
-  // humanTeam: 'red' | null (null = todos IA). levels: { red, blue } nombres de CONFIG.AI_LEVELS
-  constructor({ humanTeam = 'red', levels = { red: 'mate', blue: 'normal' }, weights = null } = {}) {
+  // teamSize: 3 | 5 · stadium: 'classic' | 'big'
+  // seats: humanos [{ team: 'red'|'blue', key, name }] (el resto de puestos son bots).
+  //   Atajo: humanTeam 'red' = un humano local en rojo; null = todos bots.
+  // levels: { red, blue } nombres de CONFIG.AI_LEVELS para los bots de cada equipo.
+  constructor({ humanTeam = 'red', seats = null, teamSize = 3, stadium = 'classic',
+    levels = { red: 'mate', blue: 'normal' }, weights = null } = {}) {
+    setStadium(stadium);
+    syncField();
+    this.teamSize = teamSize;
+    this.stadium = stadium;
+    if (!seats) seats = humanTeam ? [{ team: humanTeam, key: 'local' }] : [];
     this.world = new World();
     this.ball = makeDisc(0, 0, C.BALL_RADIUS, C.BALL_INV_MASS, C.BALL_DAMPING, C.BALL_BCOEF);
     this.ball.isBall = true;
     this.players = [];
+    this.inputs = new Map();
     for (const [team, attack] of [['red', 1], ['blue', -1]]) {
-      for (let i = 0; i < 3; i++) {
+      const humans = seats.filter((s) => s.team === team).slice(0, teamSize);
+      for (let i = 0; i < teamSize; i++) {
+        const seat = humans[i];
         const disc = makeDisc(0, 0, C.PLAYER_RADIUS, C.PLAYER_INV_MASS, C.PLAYER_DAMPING, C.PLAYER_BCOEF);
         this.players.push({
           id: this.players.length, disc, team, attack,
-          human: team === humanTeam && i === 0,
+          human: !!seat, key: seat?.key ?? null, name: seat?.name ?? '',
           input: { x: 0, y: 0, kick: false },
           kickArmed: true,
+          passRequestTick: -1e9,
         });
+        if (seat) this.inputs.set(seat.key, { x: 0, y: 0, kick: false });
       }
     }
-    this.human = this.players.find((p) => p.human) || null;
+    // el humano local (si lo hay) es el que dibuja la escena con anillo y controles
+    this.human = this.players.find((p) => p.key === 'local') || null;
+    this.humans = this.players.filter((p) => p.human);
     this.world.discs.push(...this.players.map((p) => p.disc), this.ball);
     this.brains = {
       red: new TeamBrain(this, 'red', weights),
       blue: new TeamBrain(this, 'blue', weights),
     };
     this.levels = { ...levels };
-    this.humanInput = { x: 0, y: 0, kick: false };
+    this.humanInput = this.inputs.get('local') || { x: 0, y: 0, kick: false };
     this.events = {}; // kick(p), goal(scorer), post(), passRequest()
     this.score = { red: 0, blue: 0 };
     this.stats = {
@@ -48,7 +71,7 @@ export class Match {
     this.tick = 0;
     this.ballHistory = [];
     this.lastTouch = null;
-    this.passRequestTick = -1e9;
+    this.passRequests = { red: -1e9, blue: -1e9 }; // último pase pedido por un humano de cada equipo
     this.world.onPostHit = () => this.events.post?.();
     this.startKickoff('red');
   }
@@ -59,11 +82,12 @@ export class Match {
     Object.assign(this.ball, { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0 });
     for (const team of ['red', 'blue']) {
       const members = this.players.filter((p) => p.team === team);
-      members.sort((a, b) => b.human - a.human); // el humano ocupa el sitio del que saca
-      const spots = KICKOFF_SPOTS[team === kickingTeam ? 'kicker' : 'other'];
+      members.sort((a, b) => b.human - a.human); // los humanos ocupan primero los sitios (el que saca)
+      const spots = KICKOFF_SPOTS[this.teamSize][team === kickingTeam ? 'kicker' : 'other'];
+      const k = fieldScale();
       members.forEach((p, i) => {
         const [sx, sy] = spots[i];
-        const x = sx * p.attack, y = sy;
+        const x = sx * k * p.attack, y = sy * k;
         Object.assign(p.disc, { x, y, px: x, py: y, vx: 0, vy: 0 });
         p.disc.clamp = (d) => this.kickoffClamp(p, d);
         p.kickArmed = !p.input.kick;
@@ -101,7 +125,7 @@ export class Match {
     });
     if (this.ballHistory.length > 30) this.ballHistory.shift();
 
-    if (this.human) this.readHuman();
+    for (const h of this.humans) this.readHuman(h);
     for (const team of ['red', 'blue']) this.brains[team].update(this.levels[team]);
 
     for (const p of this.players) {
@@ -145,15 +169,22 @@ export class Match {
     }
   }
 
-  readHuman() {
-    const h = this.human, inp = this.humanInput;
+  // entrada de un humano (local o remoto)
+  setInput(key, inp) {
+    const cur = this.inputs.get(key);
+    if (cur) Object.assign(cur, inp);
+  }
+
+  readHuman(h) {
+    const inp = this.inputs.get(h.key) || { x: 0, y: 0, kick: false };
     // pulsar tiro lejos del balón con un compañero en posesión = pedir el pase
     if (inp.kick && !h.input.kick) {
       const far = Math.hypot(this.ball.x - h.disc.x, this.ball.y - h.disc.y) - h.disc.r - this.ball.r > 40;
       const owner = this.lastTouch;
       if (far && owner && owner.team === h.team && owner !== h) {
-        this.passRequestTick = this.tick;
-        this.events.passRequest?.();
+        h.passRequestTick = this.tick;
+        this.passRequests[h.team] = this.tick;
+        this.events.passRequest?.(h);
       }
     }
     h.input.x = inp.x;

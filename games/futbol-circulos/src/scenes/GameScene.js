@@ -4,6 +4,7 @@ import { beep } from '../utils/sound.js';
 import { TouchControls } from '../input.js';
 import { settings } from '../settings.js';
 import { Match, DT_MS } from '../sim/match.js';
+import { MODES } from '../stadium.js';
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -14,7 +15,8 @@ export class GameScene extends Phaser.Scene {
     this.debug = C.DEBUG || new URLSearchParams(location.search).has('debug');
 
     // la simulación (física, reglas e IA) vive en Match; la escena solo dibuja y lee los controles
-    this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty } });
+    const mode = MODES[settings.mode] || MODES['3v3'];
+    this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty }, ...mode });
     this.world = this.match.world;
     this.ball = this.match.ball;
     this.players = this.match.players;
@@ -70,6 +72,11 @@ export class GameScene extends Phaser.Scene {
     this.createPauseButton();
     this.controls = new TouchControls(this, (p) => this.inPauseButton(p));
     this.applySettings();
+    // cámara de interfaz sin zoom (marcador, pausa, controles); la principal solo ve el campo
+    const ui = [this.scoreText, this.fpsText, this.pauseBtn, this.controls.gfx].filter(Boolean);
+    this.uiCam = this.cameras.add(0, 0, this.scale.gameSize.width, this.scale.gameSize.height);
+    this.uiCam.ignore(this.children.list.filter((o) => !ui.includes(o)));
+    this.cameras.main.ignore(ui);
     this.events.on('resume', () => this.applySettings());
     this.scale.on('resize', () => this.layout());
     this.layout();
@@ -86,7 +93,12 @@ export class GameScene extends Phaser.Scene {
   // Coloca cámara y HUD según el tamaño visible (EXPAND cambia el ancho/alto del lienzo).
   layout() {
     const { width } = this.scale.gameSize;
-    this.cameras.main.centerOn(0, -C.VIEW_OFFSET_Y);
+    // zoom para que quepa el estadio entero (1 en el clásico; menos en el grande)
+    const { height } = this.scale.gameSize;
+    const zoom = Math.min(1, width / (2 * C.OUTER_W + 20), height / (2 * C.OUTER_H + 40));
+    this.cameras.main.setZoom(zoom);
+    this.cameras.main.centerOn(0, -C.VIEW_OFFSET_Y / zoom);
+    this.uiCam?.setSize(width, height);
     this.scoreText.setX(width / 2);
   }
 
@@ -237,7 +249,7 @@ export class GameScene extends Phaser.Scene {
     // último hombre: punto de sombra en la bisectriz balón-portería y zona en la que sale
     const ogx = -brain.attack * C.FIELD_W;
     g.lineStyle(1, 0x00ffff, 0.6);
-    g.strokeCircle(ogx, 0, brain.P.sweep);
+    g.strokeCircle(ogx, 0, brain.sweep());
     const K = brain.shadowSpot(brain.ball);
     g.lineStyle(1, 0xffff00, 0.8);
     g.lineBetween(brain.ball.x, brain.ball.y, K.x, K.y);

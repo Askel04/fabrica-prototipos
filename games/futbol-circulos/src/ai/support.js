@@ -5,7 +5,10 @@ import { CONFIG as C } from '../config.js';
 import { clampField } from './skills.js';
 import { timeToReach, threat, laneProb, KICK_SPEED, PUSH_SPEED } from './evaluate.js';
 
-const W = C.FIELD_W, H = C.FIELD_H;
+let W = C.FIELD_W, H = C.FIELD_H;
+export function syncSupport() {
+  W = C.FIELD_W; H = C.FIELD_H;
+}
 const sigmoid = (z) => 1 / (1 + Math.exp(-z));
 
 // ¿Llega un pase desde el balón hasta S antes que cualquier rival (con margen)? 0..1
@@ -53,7 +56,8 @@ export function scoreSpot(brain, p, x, y, ball, taken, cache = null) {
   const { w, attack: a, P } = brain;
   const dCarrier = Math.hypot(x - ball.x, y - ball.y);
   const { pass, shot, tOpp } = pointInfo(brain, x, y, ball, cache);
-  const dist = Math.exp(-((dCarrier - 160) ** 2) / (2 * 70 * 70));
+  const ks = W / 370; // distancia ideal de pase escalada con el campo
+  const dist = Math.exp(-((dCarrier - 160 * ks) ** 2) / (2 * (70 * ks) ** 2));
   const tMe = timeToReach(p, x, y);
   const space = sigmoid((tOpp - tMe) / 8);
   const progress = (x * a + W) / (2 * W);
@@ -64,7 +68,7 @@ export function scoreSpot(brain, p, x, y, ball, taken, cache = null) {
   if (p.job === 'support3') {
     // 3.º con posesión: por detrás del balón, sin pasar de su profundidad máxima ni del último rival
     const lastOpp = Math.min(...brain.oppsV.map((o) => o.disc.x * a));
-    const maxX = Math.max(-W + 40, Math.min(ball.x * a - 90, -W + P.lastManDepth, lastOpp - 30));
+    const maxX = Math.max(-W + 40, Math.min(ball.x * a - 90, -W + P.lastManDepth * (W / 370), lastOpp - 30));
     brain.thirdMaxX = maxX;
     outside = Math.max(0, x * a - maxX) / 25;
   }
