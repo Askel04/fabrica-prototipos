@@ -17,9 +17,10 @@ export class TitleScene extends Phaser.Scene {
   create() {
     if (net.session) net.session.leave(); // por si se vuelve aquí desde una sala
     // ?play: directo al partido (pruebas)
-    if (!this.skipped && new URLSearchParams(location.search).has('play')) {
+    const q = new URLSearchParams(location.search);
+    if (!this.skipped && (q.has('play') || q.has('drill'))) {
       this.skipped = true;
-      this.scene.start('Game');
+      this.scene.start('Game', q.has('drill') ? { drill: q.get('drill') || 'recepcion' } : undefined);
       return;
     }
     const { width, height } = this.scale.gameSize;
@@ -28,6 +29,9 @@ export class TitleScene extends Phaser.Scene {
     this.add.text(cx, 16, 'FÚTBOL CÍRCULOS', {
       fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '34px', color: '#ffffff', stroke: '#000000', strokeThickness: 6,
     }).setOrigin(0.5, 0);
+
+    // visor de los ejercicios de la IA (para ver cómo controla, pasa y conduce)
+    button(this, width - 90, 34, 150, 'Ejercicios IA', () => this.scene.start('Game', { drill: 'recepcion' }), { h: 36, size: 15 });
 
     const top = 76, ph = 340, pw = 400;
     // ---- un jugador ----
@@ -59,6 +63,7 @@ export class TitleScene extends Phaser.Scene {
     this.busy = false;
     getTransport().then((t) => {
       this.transport = t;
+      if (!this.scene.isActive()) return; // ya se ha salido del menú
       if (!t && !this.notice) this.msg.setText('El online funciona al abrir el juego como artefacto en claude.ai (y con la sala compartida con tus amigos).');
     });
     window.__title = this; // pruebas

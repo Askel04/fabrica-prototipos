@@ -6,6 +6,8 @@ import { settings } from '../settings.js';
 import { Match, DT_MS } from '../sim/match.js';
 import { MODES } from '../stadium.js';
 import { encodeSnap, decodeSnap } from '../net/session.js';
+import { DRILLS, DrillRun } from '../drills/drills.js';
+import { SKILLSETS } from '../drills/skillsets.js';
 
 const SNAP_EVERY = 2; // el anfitrión publica una instantánea cada 2 ticks (30/s)
 const INTERP_DELAY = 5; // el cliente dibuja ~5 ticks (83 ms) por detrás de la última instantánea
@@ -16,16 +18,22 @@ export class GameScene extends Phaser.Scene {
   }
 
   // data.net: sesión online. Anfitrión = simula y publica; cliente = solo dibuja lo que recibe.
+  // data.drill: visor de ejercicios de la IA (fase 0): la IA repite un ejercicio en bucle.
   init(data) {
     this.net = data?.net || null;
-    this.role = !this.net ? 'solo' : this.net.isHost ? 'host' : 'client';
+    this.drillName = data?.drill || null;
+    this.role = this.drillName ? 'drill' : !this.net ? 'solo' : this.net.isHost ? 'host' : 'client';
   }
 
   create() {
     this.debug = C.DEBUG || new URLSearchParams(location.search).has('debug');
 
     // la simulación (física, reglas e IA) vive en Match; la escena solo dibuja y lee los controles
-    if (this.net) {
+    if (this.drillName) {
+      const skill = new URLSearchParams(location.search).get('skill') || 'actual';
+      this.drillRun = new DrillRun(this.drillName, SKILLSETS[skill] || SKILLSETS.actual, Date.now() % 100000);
+      this.match = this.drillRun.m;
+    } else if (this.net) {
       const L = (this.lobby = this.net.currentLobby());
       this.gameId = L.game;
       this.match = new Match({
@@ -67,6 +75,7 @@ export class GameScene extends Phaser.Scene {
     for (const p of this.players) {
       p.color = p.team === 'red' ? C.COLOR_RED : C.COLOR_BLUE;
       p.gfx = this.add.circle(0, 0, C.PLAYER_RADIUS, p.color).setStrokeStyle(C.BORDER_WIDTH, C.COLOR_BORDER).setDepth(10);
+      if (p.parked) p.gfx.setVisible(false);
       if (this.net && p.human) {
         p.nameText = this.add.text(0, 0, p.name, {
           fontFamily: 'sans-serif', fontSize: '12px', fontStyle: 'bold', color: '#ffffff', stroke: '#000000', strokeThickness: 3,
@@ -102,10 +111,11 @@ export class GameScene extends Phaser.Scene {
       }).setOrigin(0.5, 1).setDepth(30));
     }
     this.createPauseButton();
-    this.controls = new TouchControls(this, (p) => this.menuOpen || this.inPauseButton(p));
+    this.controls = new TouchControls(this, (p) => this.menuOpen || !!this.drillRun || this.inPauseButton(p));
+    if (this.drillRun) this.createDrillHud();
     this.applySettings();
     // cámara de interfaz sin zoom (marcador, pausa, controles); la principal solo ve el campo
-    const ui = [this.scoreText, this.fpsText, this.pauseBtn, this.controls.gfx].filter(Boolean);
+    const ui = [this.scoreText, this.fpsText, this.pauseBtn, this.controls.gfx, this.drillText].filter(Boolean);
     this.uiCam = this.cameras.add(0, 0, this.scale.gameSize.width, this.scale.gameSize.height);
     this.uiCam.ignore(this.children.list.filter((o) => !ui.includes(o)));
     this.cameras.main.ignore(ui);
@@ -138,11 +148,12 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.centerOn(0, -C.VIEW_OFFSET_Y / zoom);
     this.uiCam?.setSize(width, height);
     this.scoreText.setX(width / 2);
+    this.drillText?.setPosition(width / 2, height - 8);
   }
 
   applySettings() {
     this.controls.setModes(settings.joystick, settings.kick);
-    if (this.net) return;
+    if (this.net || this.drillRun) return;
     this.difficulty = settings.difficulty;
     this.match.levels.blue = settings.difficulty;
   }
@@ -253,6 +264,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   fixedTick() {
+    if (this.drillRun) {
+      const res = this.drillRun.step();
+      if (res) this.onDrillResult(res);
+      return;
+    }
     this.match.humanInput.x = this.controls.dirX;
     this.match.humanInput.y = this.controls.dirY;
     this.match.humanInput.kick = this.controls.kick;
@@ -265,6 +281,57 @@ export class GameScene extends Phaser.Scene {
     }
     this.match.step();
     if (this.role === 'host' && this.match.tick % SNAP_EVERY === 0) this.net.publishSnap(encodeSnap(this.match, this.seq));
+  }
+
+  // ---------------- visor de ejercicios ----------------
+  createDrillHud() {
+    const d = DRILLS[this.drillName];
+    this.drillGfx = this.add.graphics().setDepth(8);
+    this.drillText = this.add.text(0, 0, '', {
+      fontFamily: 'sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff', stroke: '#000000', strokeThickness: 4,
+      align: 'center', wordWrap: { width: 760 },
+    }).setOrigin(0.5, 1).setDepth(50).setScrollFactor(0);
+    this.drillGoal = d.goal;
+    this.updateDrillHud(null);
+    // tocar (fuera del botón de pausa) pasa al siguiente ejercicio
+    this.input.on('pointerup', (p) => {
+      if (this.menuOpen || this.inPauseButton(p)) return;
+      const names = Object.keys(DRILLS);
+      this.scene.restart({ drill: names[(names.indexOf(this.drillName) + 1) % names.length] });
+    });
+  }
+
+  updateDrillHud(last) {
+    const rs = this.drillRun.results;
+    const ok = rs.filter((r) => r.ok).length;
+    const d = DRILLS[this.drillName];
+    this.scoreText.setText(`${d.label}  ·  ${ok}/${rs.length} bien`);
+    const lastTxt = last ? `Último: ${last.ok ? 'BIEN' : `MAL (${last.why || 'lento'})`}${last.time !== undefined ? ` · ${last.time.toFixed(2)} s` : ''}${last.release !== undefined ? ` · suelta en ${last.release.toFixed(2)} s` : ''}\n` : '';
+    this.drillText.setText(`${lastTxt}${this.drillGoal}\nToca la pantalla para el siguiente ejercicio`);
+  }
+
+  onDrillResult(res) {
+    this.updateDrillHud(res);
+    this.cameras.main.flash(120, res.ok ? 80 : 160, res.ok ? 160 : 40, 40);
+  }
+
+  drawDrill() {
+    const g = this.drillGfx;
+    const ctx = this.drillRun.ctx;
+    g.clear();
+    const cross = (x, y, c) => {
+      g.lineStyle(3, c, 0.9);
+      g.lineBetween(x - 8, y - 8, x + 8, y + 8);
+      g.lineBetween(x - 8, y + 8, x + 8, y - 8);
+    };
+    if (ctx.route) ctx.route.forEach((w, i) => cross(w.x, w.y, i < ctx.wp ? 0x88ff88 : 0xffff00));
+    if (ctx.aimPt) cross(ctx.aimPt.x, ctx.aimPt.y, 0xffff00);
+    if (ctx.target) cross(ctx.target.x, ctx.target.y, 0xffff00);
+    // solo se ven los actores que el ejercicio ha colocado en el campo
+    for (const p of this.drillRun.actors) p.gfx.setVisible(Math.abs(p.disc.y) < C.FIELD_H + 20);
+    // el que hace el ejercicio, marcado con un anillo
+    g.lineStyle(2, 0xffffff, 0.8);
+    g.strokeCircle(ctx.R.disc.x, ctx.R.disc.y, C.PLAYER_RADIUS + 5);
   }
 
   // ---------------- online ----------------
@@ -453,6 +520,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   updateScore() {
+    if (this.drillRun) return;
     this.scoreText.setText(`ROJO ${this.score.red} - ${this.score.blue} AZUL`);
   }
 
@@ -464,7 +532,8 @@ export class GameScene extends Phaser.Scene {
     const h = this.human;
     h?.ring.setPosition(h.gfx.x, h.gfx.y).setAlpha(h.input.kick ? C.RING_ALPHA_KICK : C.RING_ALPHA_IDLE);
     this.controls.draw();
-    if (this.dbgGfx && this.role !== 'client') this.drawDebug();
+    if (this.dbgGfx && this.role !== 'client' && !this.drillRun) this.drawDebug();
+    if (this.drillRun) this.drawDrill();
     if (this.fpsText) {
       const b = this.ball;
       this.fpsText.setText(`FPS ${this.game.loop.actualFps.toFixed(0)}  v ${Math.hypot(b.vx, b.vy).toFixed(2)}  ${this.match.state}`);
