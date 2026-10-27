@@ -68,3 +68,29 @@ La técnica individual ya está casi en su sitio. Lo que no llega al objetivo en
 Eso es la fase 2.
 
 **Pendiente de la fase 1:** control + pase (87 → 90 %), giro (82 → 90 %), tiro (83 → 85 %), y un caso raro de balón parado 10 s (2 de 40 partidos, no reproducido en otros 25).
+
+## Fase 1b — pulido de la técnica
+
+Cambios:
+- **Zigzag con anticipación.** Conducir recibe también el punto siguiente, y el ensayo mide el avance por todo el recorrido. Así se prepara para el giro antes de llegar, en vez de maniobrar cuando ya se ha pasado. Nueva métrica: el desvío máximo del balón respecto al recorrido.
+- **Planes-controlador** además de las secuencias de mando. Se ensayan igual con la física y se ejecutan en lazo cerrado:
+  - **"llegar y golpear":** ir al punto exacto de golpeo de un balón en movimiento en el instante T, entrando por la línea de pase. Permite el pase de primeras.
+  - **"rodear y salir":** orbitar el balón por un lado hasta quedar detrás y empujar. Es el giro con balón.
+- **Tiro:** cuenta como bueno si el balón entra limpio, sin tocar el poste (radio del poste + del balón).
+- **Probado y descartado:** amagos como planes-controlador para el 1 contra 1. El ensayo casi nunca los elegía y no mejoraban el resultado.
+
+| Ejercicio (100 intentos) | Fase 0 | Fase 1 | Pulido | Objetivo |
+|---|---|---|---|---|
+| Recepción | 1,55 s | 0,28 s | **0,28 s** | ✅ |
+| Control + pase (casos normales, ≤ 1 s) | 14 % | 87 % | **94 %**, llega 100 % | ✅ |
+| Pase con defensor encima | 22 % | 84 % | **92 %** | ✅ |
+| Zigzag | 0 % | 97 %, desvío 103 | **100 %, desvío 30** | ✅ |
+| Giro con balón (≤ 1,5 s) | 0 % | 82 % | **94 %** | ✅ |
+| 1 contra 1 | 0 % | 74 % | **75 %** | ✅ |
+| Tiro | 59 % | 83 % | **93–95 %** | ✅ |
+
+En partido las cifras apenas cambian: 43 % de recepciones controladas, 27 % de pérdidas por recepción, 28 pases/min, 2,1 goles por partido. Lo que falla allí ya es la decisión (fase 2).
+
+**Coste:** ≈ 1,1 ms/tick de media en Node y en navegador de escritorio; el 5 % peor, 3,7–4,2 ms. El giro replanifica cada tick y es lo más caro; replanificar cada 2 ticks ahorraría un 18 % de cálculo pero deja el giro en 67 %.
+
+**Pendiente:** en el 1 contra 1 supera al defensor empujándolo hacia atrás (4,4 s) más que regateándolo.

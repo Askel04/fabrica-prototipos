@@ -5,12 +5,12 @@
 // Un skillset es un objeto con estas habilidades (cada una escribe p.input para este tick):
 //   control(p, ball)             recibir y dejar el balón controlado
 //   pass(p, ball, tx, ty)        controlar (o de primeras) y pasar a (tx, ty)
-//   dribble(p, ball, tx, ty)     conducir hacia (tx, ty)
+//   dribble(p, ball, tx, ty, next) conducir hacia (tx, ty); next = [x, y] punto siguiente (opcional)
 //   shoot(p, ball, tx, ty)       chutar a (tx, ty)
 //   beat(p, ball, d, gx, gy)     superar al defensor d hacia (gx, gy) sin perder el balón
 import { CONFIG as C } from '../config.js';
 import { Match } from '../sim/match.js';
-import { CONTACT, TOP_SPEED, norm, steer, edgeToBall } from '../ai/skills.js';
+import { CONTACT, TOP_SPEED, norm, steer, edgeToBall, segDist } from '../ai/skills.js';
 
 export const T = (s) => Math.round(s * C.TICK_HZ);
 const GIRO_MAX = 1.5; // objetivo del giro (s): con chute el mínimo físico es ≈ 1 s, pero el balón se va; sin chute la búsqueda grande no baja de lo que ya hace el planificador (≈ 1,45 s)
@@ -172,6 +172,8 @@ export const DRILLS = {
       ctx.route = [1, 2, 3].map((i) => ({ x: s.x + i * 150, y: s.y + (zig ? (i % 2 ? 1 : -1) * 70 : 0) }));
       ctx.wp = 0;
       ctx.zig = zig;
+      ctx.start = { x: s.x, y: s.y };
+      ctx.dev = 0;
       const [ux, uy] = norm(ctx.route[0].x - s.x, ctx.route[0].y - s.y);
       place(R, s.x, s.y);
       Object.assign(ball, { x: s.x + ux * (CONTACT + 2), y: s.y + uy * (CONTACT + 2), px: 0, py: 0, vx: 0, vy: 0 });
@@ -180,12 +182,17 @@ export const DRILLS = {
       ctx.prev = { x: ball.x, y: ball.y };
     },
     act(ctx) {
-      const w = ctx.route[ctx.wp];
-      ctx.skill.dribble(ctx.R, ctx.ball, w.x, w.y);
+      const w = ctx.route[ctx.wp], nx = ctx.route[ctx.wp + 1];
+      ctx.skill.dribble(ctx.R, ctx.ball, w.x, w.y, nx ? [nx.x, nx.y] : null); // conoce el punto siguiente
     },
     check(ctx) {
       const { R, ball, t } = ctx;
       ctx.maxSep = Math.max(ctx.maxSep, edgeToBall(R, ball));
+      // desvío: distancia del balón a la línea del recorrido (los rodeos tras pasar un punto se ven aquí)
+      const pts = [ctx.start, ...ctx.route];
+      let dmin = Infinity;
+      for (let i = 0; i < pts.length - 1; i++) dmin = Math.min(dmin, segDist(ball.x, ball.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y));
+      ctx.dev = Math.max(ctx.dev, dmin);
       ctx.path += dist(ctx.prev, ball);
       ctx.prev = { x: ball.x, y: ball.y };
       if (dist(ctx.route[ctx.wp], ball) < 40) ctx.wp++;
@@ -194,7 +201,7 @@ export const DRILLS = {
         // balón pegado (hay que acelerarlo también), el máximo físico en recta es ≈ 0,77
         const speed = ctx.path / t / TOP_SPEED;
         const min = ctx.zig ? 0.6 : 0.72;
-        return { ok: speed >= min, time: t / C.TICK_HZ, speed, maxSep: ctx.maxSep, zig: ctx.zig, why: speed < min ? 'lento' : undefined };
+        return { ok: speed >= min, time: t / C.TICK_HZ, speed, maxSep: ctx.maxSep, zig: ctx.zig, dev: ctx.dev, why: speed < min ? 'lento' : undefined };
       }
       if (edgeToBall(R, ball) > 60) return { ok: false, why: 'pierde el balón', maxSep: ctx.maxSep, zig: ctx.zig };
       return null;
@@ -402,7 +409,7 @@ export function summarize(name, results) {
   if (name === 'conduccion') {
     for (const [k, zig] of [['recta', false], ['zigzag', true]]) {
       const rs = results.filter((r) => r.zig === zig);
-      out[k] = `${Math.round((rs.filter((r) => r.ok).length / Math.max(1, rs.length)) * 100)}% bien, velocidad ${med('speed', (r) => r.zig === zig)}`;
+      out[k] = `${Math.round((rs.filter((r) => r.ok).length / Math.max(1, rs.length)) * 100)}% bien, velocidad ${med('speed', (r) => r.zig === zig)}, desvío máx. ${med('dev', (r) => r.zig === zig)}`;
     }
     out.separacionMax = med('maxSep');
   }

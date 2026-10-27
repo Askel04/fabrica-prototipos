@@ -9,7 +9,7 @@ export const TARGETS = {
   recepcion: 'ok ≥ 95 %, tiempo ≤ 0,35 s',
   controlPase: 'soltarEn1sNormal ≥ 90 % (de espaldas, < 25°, el mínimo físico pasa de 1 s), llega ≥ 85 %',
   primeraPresion: 'ok ≥ 80 %',
-  conduccion: 'recta ≥ 95 % a ≥ 0,72 (máx. físico ≈ 0,77); zigzag ≥ 90 % a ≥ 0,6',
+  conduccion: 'recta ≥ 95 % a ≥ 0,72 (máx. físico ≈ 0,77); zigzag ≥ 90 % a ≥ 0,6 con desvío ≤ 40',
   giro: 'ok ≥ 90 % (≤ 1,5 s)',
   unoContraUno: 'ok ≥ 40 %, conserva2s ≥ 80 %',
   tiro: 'ok ≥ 85 %',

@@ -59,7 +59,7 @@ export function motorSkills(onField) {
     name: 'motor',
     control: (p, ball) => mot.control(p, ball),
     pass: (p, ball, tx, ty) => mot.pass(p, ball, tx, ty),
-    dribble: (p, ball, tx, ty) => mot.dribble(p, ball, tx, ty),
+    dribble: (p, ball, tx, ty, next) => mot.dribble(p, ball, tx, ty, null, next),
     shoot: (p, ball, tx, ty) => mot.shoot(p, ball, tx, ty),
     beat: (p, ball, d, gx, gy) => mot.dribble(p, ball, gx, gy, { p: d, gx, gy, delay: DEF_DELAY }),
   };

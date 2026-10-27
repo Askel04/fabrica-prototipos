@@ -5,7 +5,7 @@
 // chute. Replanifica cada pocos ticks partiendo del plan anterior.
 import { CONFIG as C } from '../config.js';
 import { World, makeDisc } from '../physics.js';
-import { trajectory, intercept } from './evaluate.js';
+import { trajectory, intercept, timeToReach } from './evaluate.js';
 import { CONTACT, norm, steer, edgeToBall } from './skills.js';
 
 const H = 40; // horizonte del ensayo por defecto (ticks); conducir mira más lejos (H_DRIB)
@@ -48,6 +48,7 @@ function snapshot(p, ball, others) {
   }
   const near = cand.sort((a, b) => a[0] - b[0]).slice(0, NEAR_MAX).map((c) => c[1]);
   return {
+    ball, // referencia al balón real (para los planes-controlador al ejecutarse)
     p: { x: p.disc.x, y: p.disc.y, vx: p.disc.vx, vy: p.disc.vy, armed: p.kickArmed },
     b: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy },
     o: near.map((o) => ({ x: o.disc.x, y: o.disc.y, vx: o.disc.vx, vy: o.disc.vy, team: o.team, ref: o })),
@@ -80,11 +81,13 @@ function rollout(s, plan, obj, h = H) {
   }
   w.discs = discs;
   let armed = s.p.armed;
-  const kickAt = plan[KNOTS * 2];
+  const pol = plan.policy || null;
+  const kickAt = pol ? 0 : plan[KNOTS * 2];
   obj.reset(s);
   for (let t = 0; t < h; t++) {
-    planInput(plan, t, inp, h);
-    const kick = t >= kickAt;
+    let kick;
+    if (pol) kick = pol(t, SP, SB, inp);
+    else { planInput(plan, t, inp, h); kick = t >= kickAt; }
     const acc = kick ? C.PLAYER_KICK_ACCEL : C.PLAYER_ACCEL;
     SP.damping = kick ? C.PLAYER_KICK_DAMPING : C.PLAYER_DAMPING;
     SP.vx += inp[0] * acc;
@@ -124,7 +127,7 @@ function optimize(s, obj, seeds, { pop = 18, elite = 5, iters = 2, kick = false,
     if (c < bestC) { bestC = c; best = plan; }
     return c;
   };
-  const scored = seeds.map((pl) => ({ pl, c: evalPlan(pl) }));
+  const scored = seeds.map((pl) => ({ pl, c: evalPlan(pl) })).filter((e) => !e.pl.policy);
   scored.sort((a, b) => a.c - b.c);
   const mean = Float64Array.from(scored[0].pl);
   const sig = new Float64Array(DIM).fill(0.6);
@@ -223,6 +226,73 @@ function timedKickSeeds(p, ball, tx, ty) {
   return out;
 }
 
+// Plan-controlador "llegar y golpear": en el instante T del ensayo el balón estará en path[T]; el
+// jugador va primero a un punto `lead` por detrás de la línea de golpeo y, al acercarse T, entra por
+// esa línea con el chute pulsado. Se evalúa en lazo cerrado (con el estado de cada tick), así que
+// corrige pequeñas desviaciones, en ensayo y en la ejecución real.
+function arriveKick(qx, qy, dx, dy, T, lead) {
+  const policy = (t, P, B, out) => {
+    const pre = t < T - 8;
+    const tx = pre ? qx - dx * lead : qx + dx * 14, ty = pre ? qy - dy * lead : qy + dy * 14;
+    const ex = tx - P.x - P.vx * 8, ey = ty - P.y - P.vy * 8;
+    const l = Math.hypot(ex, ey) || 1;
+    const m = Math.min(1, Math.hypot(tx - P.x, ty - P.y) / (pre ? 14 : 4));
+    out[0] = (ex / l) * m;
+    out[1] = (ey / l) * m;
+    return t >= T - 5;
+  };
+  return { policy };
+}
+
+function arriveKickPlans(ball, tx, ty, h = H) {
+  const path = trajectory(ball.x, ball.y, ball.vx, ball.vy, h + 2);
+  const out = [];
+  for (let T = 6; T <= h - 2; T += 4) {
+    const a = path[T], b = path[T + 1];
+    if (!b) break;
+    const [ux, uy] = norm(tx - a.x, ty - a.y);
+    const d = kickDirFor(b.x - a.x, b.y - a.y, ux, uy);
+    if (!d) continue;
+    const qx = a.x - d[0] * (CONTACT + 3), qy = a.y - d[1] * (CONTACT + 3);
+    for (const lead of [6, 20]) out.push(arriveKick(qx, qy, d[0], d[1], T, lead));
+  }
+  return out;
+}
+
+// Plan-controlador "rodear y salir": orbita alrededor del balón por el lado `side` (radio CONTACT+gap,
+// avanzando `step` rad por tick de mira) hasta quedar detrás respecto a (tx, ty), y entonces empuja
+// hacia allí. Es el giro con balón: darse la vuelta pegado a él sin perderlo.
+function orbit(tx, ty, side, step, gap) {
+  const policy = (t, P, B, out) => {
+    const [ux, uy] = norm(tx - B.x, ty - B.y);
+    const want = Math.atan2(-uy, -ux); // ángulo (desde el balón) del punto de detrás
+    const cur = Math.atan2(P.y - B.y, P.x - B.x);
+    let diff = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+    let gx, gy;
+    if (Math.abs(diff) < 0.35) {
+      // ya detrás: empujar hacia el objetivo
+      gx = B.x + ux * 20; gy = B.y + uy * 20;
+    } else {
+      // seguir rodeando por el lado elegido (o por el corto si ya casi está)
+      const dir = Math.abs(diff) > 2.6 ? side : Math.sign(diff);
+      const a = cur + dir * Math.min(step, Math.abs(diff));
+      const r = CONTACT + gap;
+      gx = B.x + Math.cos(a) * r + B.vx * 6; gy = B.y + Math.sin(a) * r + B.vy * 6;
+    }
+    const ex = gx - P.x - P.vx * 6, ey = gy - P.y - P.vy * 6;
+    const l = Math.hypot(ex, ey) || 1;
+    out[0] = ex / l; out[1] = ey / l;
+    return false;
+  };
+  return { policy };
+}
+
+function orbitPlans(tx, ty) {
+  const out = [];
+  for (const side of [-1, 1]) for (const step of [0.5, 0.9]) for (const gap of [2, 8]) out.push(orbit(tx, ty, side, step, gap));
+  return out;
+}
+
 // ---------------- objetivos (costes) de cada habilidad ----------------
 const relSpeed = (P, B) => Math.hypot(B.vx - P.vx, B.vy - P.vy);
 const edgePB = (P, B) => Math.hypot(B.x - P.x, B.y - P.y) - P.r - B.r;
@@ -288,8 +358,10 @@ function shotObj(gx, tx, ty) {
       kt = t;
       const path = trajectory(B.x, B.y, B.vx, B.vy, 150);
       const end = path[path.length - 1];
-      inGoal = end.goal === Math.sign(gx) && Math.abs(end.y) < C.GOAL_HALF - 10;
-      miss = inGoal ? 0 : end.goal ? Math.abs(end.y) - (C.GOAL_HALF - 10) : 200;
+      // entra limpio: sin tocar el poste (radio del poste + del balón, con un pequeño margen)
+      const clear = C.GOAL_HALF - C.POST_RADIUS - C.BALL_RADIUS - 2;
+      inGoal = end.goal === Math.sign(gx) && Math.abs(end.y) < clear;
+      miss = inGoal ? 0 : end.goal ? Math.abs(end.y) - clear : 200;
       const a = Math.atan2(B.vy, B.vx) - Math.atan2(ty - B.y, tx - B.x);
       err = Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * (180 / Math.PI);
     },
@@ -307,17 +379,25 @@ function shotObj(gx, tx, ty) {
 
 // Conducir en dirección a (tx, ty): avanzar con el balón pegado y el cuerpo detrás de él, sin
 // frenar al llegar (es una dirección, no un punto de parada) y sin que el balón se vaya de lado.
+// next (opcional): el punto que viene después. Con él el ensayo mide el avance por todo el recorrido
+// (al pasar a menos de REACH de (tx, ty) sigue hacia next), así que el jugador se anticipa al giro
+// (frena o se perfila antes) en vez de maniobrar cuando ya se ha pasado.
 // def (opcional): { p, gx, gy, delay } defensor que hay que evitar (protege la portería en gx, gy);
 // en el ensayo se supone que va al balón por su lado con su retardo, y robo = balón pegado a él.
-function dribbleObj(tx, ty, def = null) {
+const REACH = 40;
+function dribbleObj(tx, ty, def = null, next = null) {
   const side = def ? 0 : 1; // para superar a un defensor hay que poder salir de lado
-  let ux, uy, bx0, by0, lost, stolen, minDef, di, flow;
+  const leg = next ? Math.hypot(next[0] - tx, next[1] - ty) : 0;
+  let ux, uy, bx0, by0, lost, stolen, minDef, di, flow, seg, rem0, turnBonus;
   const seen = []; // posiciones del balón que "ve" el defensor (con su retardo)
+  // lo que queda de recorrido desde el balón (si hay siguiente punto)
+  const remaining = (B) => (seg === 0 ? Math.hypot(tx - B.x, ty - B.y) + leg : Math.hypot(next[0] - B.x, next[1] - B.y));
   return {
     reset(s) {
       [ux, uy] = norm(tx - s.b.x, ty - s.b.y);
       bx0 = s.b.x; by0 = s.b.y;
-      lost = 0; stolen = 0; minDef = Infinity; flow = 0;
+      lost = 0; stolen = 0; minDef = Infinity; flow = 0; seg = 0; turnBonus = 0;
+      rem0 = next ? remaining(s.b) : 0;
       di = def ? s.o.findIndex((o) => o.ref === def.p) : -1;
       seen.length = 0;
       const k = def?.delay || 0;
@@ -338,6 +418,11 @@ function dribbleObj(tx, ty, def = null) {
     step(t, P, B) {
       const e = edgePB(P, B);
       if (e > 45) lost++;
+      if (next) {
+        // tramo actual: hacia (tx, ty) y, al llegar con el balón controlado, hacia next
+        if (seg === 0 && Math.hypot(tx - B.x, ty - B.y) < REACH) { seg = 1; if (e < 15) turnBonus = 6; }
+        [ux, uy] = seg === 0 ? norm(tx - B.x, ty - B.y) : norm(next[0] - B.x, next[1] - B.y);
+      }
       flow += (B.vx * ux + B.vy * uy) * 0.12 - Math.abs(-B.vx * uy + B.vy * ux) * 0.25 * side;
       if (di >= 0) {
         const dd = POOL[di];
@@ -348,11 +433,13 @@ function dribbleObj(tx, ty, def = null) {
       return true;
     },
     cost(P, B) {
-      const prog = (B.x - bx0) * ux + (B.y - by0) * uy;
-      const off = Math.abs(-(B.x - bx0) * uy + (B.y - by0) * ux);
       const [bx, by] = norm(B.x - P.x, B.y - P.y);
       const behind = (1 - (bx * ux + by * uy)) * 12;
-      let c = -prog * 0.4 - flow + off * 0.1 * side + Math.max(0, edgePB(P, B) - 12) * 0.8 + behind + lost * 2;
+      const tail = Math.max(0, edgePB(P, B) - 12) * 0.8 + behind + lost * 2;
+      if (next) return -(rem0 - remaining(B)) * 0.4 - flow - turnBonus + tail;
+      const prog = (B.x - bx0) * ux + (B.y - by0) * uy;
+      const off = Math.abs(-(B.x - bx0) * uy + (B.y - by0) * ux);
+      let c = -prog * 0.4 - flow + off * 0.1 * side + tail;
       if (di >= 0) {
         c += stolen * 6 + Math.max(0, 12 - minDef) * 1.5;
         // superado: el balón (controlado) ya está por delante del defensor hacia la portería
@@ -377,10 +464,10 @@ function runPlan(p, key, build, replan = REPLAN) {
   const { s, obj, seeds, kick, h = H, budget: b = null } = build();
   const budget = over ? { pop: 6, iters: 1, elite: 3 } : b;
   // plan anterior desplazado (sigue siendo buena semilla si el objetivo no ha cambiado)
-  if (st && st.key === key && st.plan) seeds.push(shift(st.plan, p.motorT - st.tick));
+  if (st && st.key === key && st.plan && !st.plan.policy) seeds.push(shift(st.plan, p.motorT - st.tick));
   const { plan } = optimize(s, obj, seeds, { kick, h, ...(budget || {}) });
   const since = st && st.key === key ? st.since : p.motorT;
-  p.motor = { key, plan, tick: p.motorT, h, since };
+  p.motor = { key, plan, tick: p.motorT, h, since, ball: s.ball };
   return apply(p, p.motor, p.motorT);
 }
 
@@ -392,6 +479,12 @@ function shift(plan, dt) {
 
 function apply(p, st, tick) {
   const t = tick - st.tick;
+  if (st.plan.policy) {
+    // plan-controlador: se evalúa con el estado real (mismo código que en el ensayo)
+    const kick = st.plan.policy(t, p.disc, st.ball, inp);
+    p.input.x = inp[0]; p.input.y = inp[1]; p.input.kick = kick;
+    return;
+  }
   planInput(st.plan, t, inp, st.h);
   p.input.x = inp[0];
   p.input.y = inp[1];
@@ -399,10 +492,27 @@ function apply(p, st, tick) {
 }
 
 // ¿El balón llega a esta zona dentro del horizonte? Si no, ir al punto de intercepción sin ensayar.
-function farApproach(p, ball, horizonTicks = 120) {
+// aim (opcional): a dónde se va a jugar el balón. Entonces no espera de cara al balón sino en el
+// punto desde el que podrá golpearlo de primeras hacia aim (perfilado para el pase).
+function farApproach(p, ball, horizonTicks = 120, aim = null) {
   const path = trajectory(ball.x, ball.y, ball.vx, ball.vy, horizonTicks);
   const it = intercept(p, path, horizonTicks);
   if (it.t <= H - 6 || edgeToBall(p, ball) < 60) return false;
+  if (aim) {
+    for (let t = Math.max(1, it.t); t < path.length - 1; t++) {
+      const a = path[t], b = path[t + 1];
+      const [ux, uy] = norm(aim[0] - a.x, aim[1] - a.y);
+      const d = kickDirFor(b.x - a.x, b.y - a.y, ux, uy);
+      if (!d) continue;
+      const qx = a.x - d[0] * (CONTACT + 4), qy = a.y - d[1] * (CONTACT + 4);
+      if (timeToReach(p, qx, qy) + 4 <= t) {
+        steer(p, qx, qy, 1, 12);
+        p.input.kick = false;
+        p.motor = null;
+        return true;
+      }
+    }
+  }
   // esperar al balón un poco por detrás del punto de corte (para amortiguar)
   const [vx, vy] = norm(ball.vx, ball.vy);
   steer(p, it.x + vx * (CONTACT + 6), it.y + vy * (CONTACT + 6), 1, 10);
@@ -434,7 +544,7 @@ export function makeMotor(others) {
     // tOpp: ticks que tardaría el rival más cercano en llegar al balón (presión): con un rival
     // encima se suelta antes y con más margen de error, como haría un jugador.
     pass(p, ball, tx, ty, aimW = 3, maxErr = null, tOpp = Infinity) {
-      if (farApproach(p, ball)) return;
+      if (farApproach(p, ball, 120, [tx, ty])) return;
       const key = `kick:${Math.round(tx / 60)},${Math.round(ty / 60)}`;
       runPlan(p, key, () => {
         // cuanto más tiempo lleva buscando el golpeo, más error acepta (no esperar eternamente)
@@ -453,7 +563,7 @@ export function makeMotor(others) {
           s: snapshot(p, ball, others()),
           obj: kickObj(tx, ty, w, minSpeed, tol, 1 + press * 3),
           seeds: [towards(p, qx, qy, 6), towards(p, qx, qy, 15), towards(p, ball.x, ball.y, 0), towards(p, qx, qy, NO_KICK),
-            ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty)],
+            ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty), ...arriveKickPlans(ball, tx, ty)],
           kick: true,
         };
       }, replanFor(p, ball));
@@ -468,24 +578,26 @@ export function makeMotor(others) {
           s: snapshot(p, ball, others()),
           obj: shotObj(Math.sign(tx) * C.FIELD_W, tx, ty),
           seeds: [towards(p, qx, qy, 6), towards(p, qx, qy, 15), towards(p, ball.x, ball.y, 0),
-            ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty)],
+            ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty), ...arriveKickPlans(ball, tx, ty)],
           kick: true,
         };
       });
     },
-    dribble(p, ball, tx, ty, def = null) {
+    dribble(p, ball, tx, ty, def = null, next = null) {
       if (edgeToBall(p, ball) > 40 && farApproach(p, ball)) return;
       const [ux, uy] = norm(tx - ball.x, ty - ball.y);
-      // darse la vuelta con el balón es la maniobra más difícil: más ensayos y replanificar cada tick
+      // darse la vuelta con el balón es la maniobra más difícil: planes de rodear el balón, más
+      // ensayos y replanificar más a menudo
       const turning = (ball.x - p.disc.x) * ux + (ball.y - p.disc.y) * uy < 0.5 * Math.hypot(ball.x - p.disc.x, ball.y - p.disc.y);
-      runPlan(p, `drib:${Math.round(tx / 60)},${Math.round(ty / 60)}`, () => {
+      const nk = next ? `>${Math.round(next[0] / 60)},${Math.round(next[1] / 60)}` : '';
+      runPlan(p, `drib:${Math.round(tx / 60)},${Math.round(ty / 60)}${nk}`, () => {
         return {
           s: snapshot(p, ball, others()),
-          obj: dribbleObj(tx, ty, def),
+          obj: dribbleObj(tx, ty, def, next),
           h: H_DRIB,
           budget: turning ? { pop: 28, iters: 3, elite: 6 } : { pop: 14, iters: 2, elite: 4 },
           seeds: [towards(p, ball.x - ux * CONTACT, ball.y - uy * CONTACT), towards(p, tx, ty), towards(p, ball.x, ball.y, NO_KICK, 0.6),
-            ...aroundSeeds(p, ball, ux, uy, [NO_KICK])],
+            ...aroundSeeds(p, ball, ux, uy, [NO_KICK]), ...(turning ? orbitPlans(tx, ty) : [])],
           kick: false,
         };
       }, turning ? 1 : replanFor(p, ball));
