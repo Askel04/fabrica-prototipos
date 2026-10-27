@@ -4,6 +4,16 @@ import { settings, setSetting } from '../settings.js';
 import { panel, label, segmented, button, textInput } from '../ui/widgets.js';
 import { NetSession, getTransport, net } from '../net/session.js';
 
+// Por qué no hay online en esta vista. Las salas de Claude solo admiten a quien tiene acceso al
+// artefacto con su cuenta: el dueño y las personas invitadas por email desde Compartir. Quien entra
+// con un enlace público o sin sesión ve el juego, pero no puede conectarse a las salas.
+function noOnlineReason() {
+  let framed = true;
+  try { framed = window.top !== window; } catch { /* marco de otro dominio: sí está enmarcado */ }
+  if (!framed || !window.claude) return 'El online solo funciona abriendo el juego dentro de claude.ai (web o app).';
+  return 'Tu cuenta no tiene acceso a las salas de este juego. Pide que te inviten por email desde Compartir e inicia sesión con esa cuenta (con un enlace público no se puede jugar online).';
+}
+
 // Menú principal: un jugador (modo y dificultad) u online (crear sala o unirse con un código).
 export class TitleScene extends Phaser.Scene {
   constructor() {
@@ -64,7 +74,7 @@ export class TitleScene extends Phaser.Scene {
     getTransport().then((t) => {
       this.transport = t;
       if (!this.scene.isActive()) return; // ya se ha salido del menú
-      if (!t && !this.notice) this.msg.setText('El online funciona al abrir el juego como artefacto en claude.ai (y con la sala compartida con tus amigos).');
+      if (!t && !this.notice) this.msg.setText(noOnlineReason());
     });
     window.__title = this; // pruebas
   }
@@ -106,7 +116,7 @@ export class TitleScene extends Phaser.Scene {
 
   async ready() {
     const t = await getTransport();
-    if (!t) this.msg.setText('El online solo funciona dentro de claude.ai: abre el artefacto allí (tus amigos también).');
+    if (!t) this.msg.setText(noOnlineReason());
     return !!t;
   }
 }
