@@ -153,3 +153,20 @@ Lo que vio el usuario en el móvil: no tenían objetivo, solo no perder el baló
 **Mano a mano**, en el mismo partido (40 partidos, Difícil contra Difícil), con las pautas de intención activadas en un equipo y desactivadas en el otro: **96–30 en goles** a favor del que busca portería. El otro retiene más el balón y pierde menos, pero no hace daño.
 
 **Niveles 5v5:** Difícil contra Normal 9-0-3, Normal contra Fácil 10-0-2. Ya quedan bien separados.
+
+## Pase atrás para reciclar (`recycle`, `switchPlay`)
+
+Petición del usuario: que sigan buscando el pase adelante, pero que no dejen de pasar atrás cuando no haya otra salida o el pase genere una rotación y espacio.
+
+**Qué cambia.** El premio por avanzar castigaba todo pase atrás. Ahora un pase atrás vale lo mismo que su versión "reciclar": amenaza de la zona + `recycle` × lo libre que queda el receptor (su margen de tiempo frente a los rivales). Si además cambia el balón de lado (más de 140 en vertical), suma `switchPlay`. La dejada al último hombre se penaliza menos (0,85 en vez de 0,6).
+
+| Por equipo (48 partidos) | Sin reciclar | Con reciclar |
+|---|---|---|
+| Pases atrás buenos por minuto | 1,0 | **1,4** |
+| Pases buenos por minuto | 4,2 | **5,0** |
+| Pases que llegan | 63 % | **67 %** |
+| Pases hacia delante buenos por minuto | 1,4 | **1,6** |
+| Pérdidas antes de soltar | 27 % | **24 %** |
+| Goles por partido | 2,0 | **2,5** |
+
+Mano a mano (40 partidos, un equipo con la pauta y el otro sin ella): 37–41 en goles, es decir, empate dentro del ruido. Juega mejor sin perder eficacia.

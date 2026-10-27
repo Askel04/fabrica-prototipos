@@ -22,4 +22,5 @@
 | 2026-10-27 | Pulido de técnica: zigzag con anticipación, planes "llegar y golpear" y "rodear y salir", tiro con postes | 2 |
 | 2026-10-27 | Fase 2 IA: pautas de decisión (primera, suelta rápido, ¿me da tiempo?, línea cerrada, ir a recibir, presión, apoyo corto), evaluación paralela | 3.5 |
 | 2026-10-27 | Intención: pases al hueco, desmarques de ruptura, valor del avance, tiro probabilístico y remate de primeras | 2.5 |
-| | **Total** | **33.75** |
+| 2026-10-27 | Joystick fijo más alto; pase atrás para reciclar/cambiar de lado | 0.75 |
+| | **Total** | **34.5** |

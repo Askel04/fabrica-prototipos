@@ -15,7 +15,7 @@ import { Match } from '../src/sim/match.js';
 import { trajectory } from '../src/ai/evaluate.js';
 
 export function runGames(games, minutes, weights = {}, level = 'hard', size = 5) {
-  const out = { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 };
+  const out = { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, atrasBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 };
   for (let g = 0; g < games; g++) {
     const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: { red: level, blue: level }, weights });
     let cur = null, pending = null, press = null;
@@ -27,6 +27,7 @@ export function runGames(games, minutes, weights = {}, level = 'hard', size = 5)
           const good = p.team === pending.p.team;
           if (good) out.pasaBien++; else out.pasaMal++;
           if (good && (m.ball.x - pending.x0) * pending.p.attack >= 60) out.adelanteBien++;
+          if (good && (m.ball.x - pending.x0) * pending.p.attack <= -40) out.atrasBien++;
           if (pending.kind === 'space' && good) out.huecoBien++;
           pending = null;
         }
@@ -79,6 +80,7 @@ export function summary(o) {
     golesPartido: +(o.goles / Math.max(1, o.games)).toFixed(2),
     presionATiempo: `${Math.round((o.presOk / Math.max(1, o.presOport)) * 100)}%`,
     adelanteBuenosMin: +(o.adelanteBien / Math.max(1, o.minutes) / 2).toFixed(1),
+    atrasBuenosMin: +(o.atrasBien / Math.max(1, o.minutes) / 2).toFixed(1),
     huecoMin: +(o.huecoIntentos / Math.max(1, o.minutes) / 2).toFixed(1),
     huecoOk: `${Math.round((o.huecoBien / Math.max(1, o.huecoIntentos)) * 100)}%`,
     tirosPartido: +(o.tiros / Math.max(1, o.games)).toFixed(1),
@@ -98,7 +100,7 @@ export function runParallel(games, minutes, weights = {}, level = 'hard', procs 
   }))).then((parts) => parts.reduce((acc, o) => {
     for (const k of Object.keys(acc)) acc[k] += o[k];
     return acc;
-  }, { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 }));
+  }, { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, atrasBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 }));
 }
 
 if (process.argv[2] === '--child') {

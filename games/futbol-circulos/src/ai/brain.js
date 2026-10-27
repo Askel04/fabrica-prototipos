@@ -51,6 +51,8 @@ export const DEFAULT_WEIGHTS = {
   pressTrig: 1, // pauta "salta a presionar" (recibe, de espaldas, en banda); 0 = desactivada
   progress: 0.6, // pauta "busca la portería": valor extra por adelantar el balón (pases y conducción)
   firstShot: 0.3, // remate de primeras si la calidad del tiro desde donde llega el balón supera esto
+  recycle: 0.3, // pauta "pase atrás para reciclar": valor de dársela atrás a un compañero libre
+  switchPlay: 0.2, // … extra si además cambia el balón de lado (abre espacio en el otro)
   space: 1, // pauta "pase al hueco": probar destinos en el espacio por delante de cada compañero
   runs: 1, // pauta "desmárcate": atacar la espalda de la defensa cuando el equipo tiene el balón
   shortSupport: 1, // pauta "apoyo corto": el más cercano se ofrece con línea de pase libre
@@ -702,7 +704,16 @@ export class TeamBrain {
         if (d < 50) continue;
         const mode = d > (kind === 'feet' ? 130 : 180) || kind === 'wall' || kind === 'space' ? 'kick' : 'push';
         const ps = passSafety(shotPath(ball.x, ball.y, tx, ty, mode === 'kick' ? KICK_SPEED : PUSH_SPEED, 100), mt, opps, P.passMarginTicks);
-        let u = w.pass * tr.pass * ps.p * value(ps.x, ps.y) * align(tx, ty);
+        let val = value(ps.x, ps.y);
+        if ((ps.x - ball.x) * a < 0) {
+          // pase atrás: no se castiga por retroceder si el que recibe queda libre (reciclar) y, más
+          // aún, si cambia el balón de lado; con presión y sin salida adelante, es la opción buena
+          const tFree = Math.min(...opps.map((o) => timeToReach(o, ps.x, ps.y))) - ps.t;
+          const open = 1 / (1 + Math.exp(-(tFree - 15) / 8));
+          const sw = Math.abs(ps.y - ball.y) > 140 * fieldScale() ? w.switchPlay : 0;
+          val = Math.max(val, threat(ps.x, ps.y, a) + 0.15 + (w.recycle + sw) * open);
+        }
+        let u = w.pass * tr.pass * ps.p * val * align(tx, ty);
         if (mt.human) u += w.human * ps.p;
         const running = mt.disc.vx * a > 0.8;
         const requested = mt.human && tick - mt.passRequestTick < 90; // ese humano pidió el pase
@@ -710,7 +721,7 @@ export class TeamBrain {
         if (P.oneTwo && this.lastPass?.from === mt && this.lastPass.to === p && tick - this.lastPass.tick < 120) u += w.oneTwo * ps.p;
         if (mt.run && mt.run.until > tick) u += w.oneTwo * 0.5 * ps.p;
         // atrás al último hombre: dejada bajo presión (niveles que la conocen) o para reiniciar
-        if (mt.job === 'support3' && !danger) u *= P.drop && pressure > 0.5 ? 1 : 0.6;
+        if (mt.job === 'support3' && !danger) u *= P.drop && pressure > 0.5 ? 1 : 0.85;
         // pauta "suelta rápido": con presión, los pases seguros ganan frente a seguir con el balón
         u *= 1 + w.quick * pressure * ps.p;
         // en zona de peligro solo pases seguros y nunca hacia la propia portería

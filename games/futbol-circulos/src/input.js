@@ -73,8 +73,7 @@ export class TouchControls {
 
   fixedBase() {
     const { height } = this.scene.scale.gameSize;
-    const off = C.JOY_FIXED_MARGIN + C.JOY_RADIUS;
-    return [off, height - off];
+    return [C.JOY_FIXED_MARGIN + C.JOY_RADIUS, height - C.JOY_FIXED_MARGIN_Y - C.JOY_RADIUS];
   }
 
   kickButton() {
