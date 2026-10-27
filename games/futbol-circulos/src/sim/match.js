@@ -4,6 +4,7 @@ import { CONFIG as C } from '../config.js';
 import { World, makeDisc } from '../physics.js';
 import { TeamBrain, syncField } from '../ai/brain.js';
 import { setStadium, fieldScale } from '../stadium.js';
+import { motorTick } from '../ai/motor.js';
 
 export const DT_MS = 1000 / C.TICK_HZ;
 export const ms2ticks = (ms) => Math.max(1, Math.round(ms / DT_MS));
@@ -129,6 +130,7 @@ export class Match {
     if (this.ballHistory.length > 30) this.ballHistory.shift();
 
     for (const h of this.humans) this.readHuman(h);
+    motorTick();
     for (const team of ['red', 'blue']) this.brains[team].update(this.levels[team]);
 
     for (const p of this.players) {

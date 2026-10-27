@@ -13,12 +13,15 @@ import { Match } from '../sim/match.js';
 import { CONTACT, TOP_SPEED, norm, steer, edgeToBall } from '../ai/skills.js';
 
 export const T = (s) => Math.round(s * C.TICK_HZ);
+const GIRO_MAX = 1.5; // objetivo del giro (s): con chute el mínimo físico es ≈ 1 s, pero el balón se va; sin chute la búsqueda grande no baja de lo que ya hace el planificador (≈ 1,45 s)
 
 // Defensor de examen: siempre el mismo (para comparar skillsets). Se pone entre el balón y su
-// portería, a contacto, y si tiene el balón a tiro lo toca (robo).
-export function examDefender(d, ball, gx, gy, intensity = 1) {
-  const [ux, uy] = norm(gx - ball.x, gy - ball.y);
-  steer(d, ball.x + ux * (CONTACT - 2), ball.y + uy * (CONTACT - 2), intensity, 8);
+// portería, a contacto, y si tiene el balón a tiro lo toca (robo). Ve el balón con el retardo de
+// reacción de la IA en Difícil (seen = posición de hace DEF_DELAY ticks), así que los amagos sirven.
+export const DEF_DELAY = 8;
+export function examDefender(d, ball, gx, gy, intensity = 1, seen = ball) {
+  const [ux, uy] = norm(gx - seen.x, gy - seen.y);
+  steer(d, seen.x + ux * (CONTACT - 2), seen.y + uy * (CONTACT - 2), intensity, 8);
   if (edgeToBall(d, ball) <= C.KICK_DIST + 1) {
     const [bx, by] = norm(ball.x - d.disc.x, ball.y - d.disc.y);
     d.input.x = bx;
@@ -107,7 +110,10 @@ export const DRILLS = {
       const m = around(rng, r, 150, 350);
       place(M, m.x, m.y);
       launch(ball, around(rng, r, 180, 300, 15), r, rng);
-      Object.assign(ctx, { arrive: null, kickT: null, minD: Infinity });
+      // ángulo entre la dirección del balón y la del pase: < 25° = jugar hacia delante recibiendo de
+      // espaldas, que físicamente lleva más de 1 s (ver IA-EXAMEN.md)
+      const a = Math.atan2(ball.vy, ball.vx) - Math.atan2(m.y - r.y, m.x - r.x);
+      Object.assign(ctx, { arrive: null, kickT: null, minD: Infinity, ang: Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * 57.3 });
     },
     act(ctx) {
       const { R, M, ball } = ctx;
@@ -121,9 +127,9 @@ export const DRILLS = {
       if (ctx.kickT !== null) {
         ctx.minD = Math.min(ctx.minD, dist(M.disc, ball));
         const release = (ctx.kickT - ctx.arrive) / C.TICK_HZ;
-        if (ctx.minD < CONTACT + 6) return { ok: release <= 1, release, arrived: true };
-        if (t - ctx.kickT > T(3) || Math.hypot(ball.vx, ball.vy) < 0.2) return { ok: false, release, arrived: false, why: 'no llega' };
-      } else if (ctx.arrive !== null && dist(R.disc, ball) > 160) return { ok: false, why: 'se escapa' };
+        if (ctx.minD < CONTACT + 6) return { ok: release <= 1, release, arrived: true, ang: ctx.ang };
+        if (t - ctx.kickT > T(3) || Math.hypot(ball.vx, ball.vy) < 0.2) return { ok: false, release, arrived: false, why: 'no llega', ang: ctx.ang };
+      } else if (ctx.arrive !== null && dist(R.disc, ball) > 160) return { ok: false, why: 'se escapa', ang: ctx.ang };
       return null;
     },
   },
@@ -144,7 +150,7 @@ export const DRILLS = {
     act(ctx) {
       DRILLS.controlPase.act(ctx);
       // presiona al receptor por el lado de su compañero (cortando el pase); tras el pase se para
-      if (ctx.kickT === null) examDefender(ctx.D, ctx.ball, ctx.M.disc.x, ctx.M.disc.y);
+      if (ctx.kickT === null) examDefender(ctx.D, ctx.ball, ctx.M.disc.x, ctx.M.disc.y, 1, ctx.seen);
     },
     check(ctx) {
       if (ctx.kickT === null && stealCheck(ctx, ctx.R, ctx.D)) return { ok: false, why: 'robo' };
@@ -162,7 +168,8 @@ export const DRILLS = {
       const { rng, R, ball } = ctx;
       const s = { x: -C.FIELD_W + 120, y: (rng() * 2 - 1) * 60 };
       const zig = rng() < 0.5;
-      ctx.route = [1, 2, 3].map((i) => ({ x: s.x + i * 150, y: s.y + (zig ? (i % 2 ? 1 : -1) * 90 : 0) }));
+      // zigzag: ±70 de lado cada 150 (cambios de rumbo de ~50°)
+      ctx.route = [1, 2, 3].map((i) => ({ x: s.x + i * 150, y: s.y + (zig ? (i % 2 ? 1 : -1) * 70 : 0) }));
       ctx.wp = 0;
       ctx.zig = zig;
       const [ux, uy] = norm(ctx.route[0].x - s.x, ctx.route[0].y - s.y);
@@ -181,30 +188,33 @@ export const DRILLS = {
       ctx.maxSep = Math.max(ctx.maxSep, edgeToBall(R, ball));
       ctx.path += dist(ctx.prev, ball);
       ctx.prev = { x: ball.x, y: ball.y };
-      if (dist(ctx.route[ctx.wp], ball) < 30) ctx.wp++;
+      if (dist(ctx.route[ctx.wp], ball) < 40) ctx.wp++;
       if (ctx.wp >= ctx.route.length) {
+        // velocidad media del balón respecto a la punta del jugador. Arrancando de parado y con el
+        // balón pegado (hay que acelerarlo también), el máximo físico en recta es ≈ 0,77
         const speed = ctx.path / t / TOP_SPEED;
-        return { ok: speed >= 0.7, time: t / C.TICK_HZ, speed, maxSep: ctx.maxSep, zig: ctx.zig, why: speed < 0.7 ? 'lento' : undefined };
+        const min = ctx.zig ? 0.6 : 0.72;
+        return { ok: speed >= min, time: t / C.TICK_HZ, speed, maxSep: ctx.maxSep, zig: ctx.zig, why: speed < min ? 'lento' : undefined };
       }
-      if (edgeToBall(R, ball) > 60) return { ok: false, why: 'pierde el balón', maxSep: ctx.maxSep };
+      if (edgeToBall(R, ball) > 60) return { ok: false, why: 'pierde el balón', maxSep: ctx.maxSep, zig: ctx.zig };
       return null;
     },
     timeout(ctx) {
-      return { ok: false, why: ctx.zig ? 'zigzag sin terminar' : 'recta sin terminar' };
+      return { ok: false, why: ctx.zig ? 'zigzag sin terminar' : 'recta sin terminar', zig: ctx.zig };
     },
   },
 
   giro: {
-    label: 'Giro 180°',
-    goal: 'Conduciendo a buena velocidad, darse la vuelta con el balón (≤ 0,8 s)',
+    label: 'Giro con balón',
+    goal: 'Con el balón en los pies y de espaldas al objetivo: darse la vuelta y salir conduciendo hacia él',
     maxT: T(3),
     setup(ctx) {
       const { rng, R, ball } = ctx;
       const y = (rng() * 2 - 1) * 100;
       const dir = rng() < 0.5 ? 1 : -1;
-      const v = 1.6 + rng() * 0.6;
+      const v = rng() * 0.6; // casi parado, con el balón pegado delante
       place(R, -dir * 100, y, dir * v, 0);
-      Object.assign(ball, { x: -dir * 100 + dir * (CONTACT + 3), y, px: 0, py: 0, vx: dir * v, vy: 0 });
+      Object.assign(ball, { x: -dir * 100 + dir * (CONTACT + 2), y, px: 0, py: 0, vx: dir * v, vy: 0 });
       ctx.dir = dir;
       ctx.target = { x: -dir * 400, y };
     },
@@ -214,15 +224,15 @@ export const DRILLS = {
     check(ctx) {
       const { R, ball, t, dir } = ctx;
       if (edgeToBall(R, ball) > 60) return { ok: false, why: 'pierde el balón' };
-      // ya va hacia atrás con el balón pegado
-      if (-dir * ball.vx > 1.2 && edgeToBall(R, ball) < 20) return { ok: t <= T(0.8), time: t / C.TICK_HZ, why: t > T(0.8) ? 'lento' : undefined };
+      // ya sale hacia el objetivo con el balón pegado
+      if (-dir * ball.vx > 1.0 && edgeToBall(R, ball) < 20) return { ok: t <= T(GIRO_MAX), time: t / C.TICK_HZ, why: t > T(GIRO_MAX) ? 'lento' : undefined };
       return null;
     },
   },
 
   unoContraUno: {
     label: '1 contra 1',
-    goal: 'Con el balón y un defensor delante: superarlo sin perderlo (o al menos conservarlo 2 s)',
+    goal: 'Con el balón y un defensor delante: dejarlo atrás o llegar a zona de tiro sin perderlo',
     maxT: T(5),
     setup(ctx) {
       const { rng, R, D, ball } = ctx;
@@ -237,13 +247,15 @@ export const DRILLS = {
     act(ctx) {
       const { R, D, ball } = ctx;
       ctx.skill.beat(R, ball, D, ctx.goalPt.x, ctx.goalPt.y);
-      examDefender(D, ball, C.FIELD_W, 0); // defiende la portería hacia la que va el atacante
+      examDefender(D, ball, C.FIELD_W, 0, 1, ctx.seen); // defiende la portería hacia la que va el atacante
     },
     check(ctx) {
       const { R, D, ball, t, m } = ctx;
       if (t === T(2)) ctx.kept2 = true;
       if (stealCheck(ctx, R, D)) return { ok: false, why: 'robo', kept2: ctx.kept2 };
-      if (ball.x > D.disc.x + 40 && edgeToBall(R, ball) < 30) return { ok: true, time: t / C.TICK_HZ, kept2: true };
+      // superado: lo deja atrás, o llega con el balón controlado a zona de tiro (< 170 de la portería)
+      if (ball.x > D.disc.x + 30 && edgeToBall(R, ball) < 30) return { ok: true, time: t / C.TICK_HZ, kept2: true };
+      if (Math.hypot(C.FIELD_W - ball.x, ball.y) < 170 && edgeToBall(R, ball) < 20) return { ok: true, time: t / C.TICK_HZ, kept2: true };
       if (m.state === 'goal') return { ok: true, time: t / C.TICK_HZ, kept2: true };
       if (edgeToBall(R, ball) > 90) return { ok: false, why: 'lo pierde', kept2: ctx.kept2 };
       return null;
@@ -299,7 +311,7 @@ export class DrillRun {
   constructor(name, skill, seed = 1) {
     this.drill = DRILLS[name];
     this.name = name;
-    this.skill = skill;
+    this.skill = typeof skill === 'function' ? skill(this) : skill; // fábricas (p. ej. 'motor')
     this.rng = seeded(seed);
     this.m = new Match({ humanTeam: null, teamSize: 5, stadium: 'big', levels: { red: 'hard', blue: 'hard' } });
     for (const b of Object.values(this.m.brains)) b.update = () => {}; // aquí mandan el ejercicio y el skillset
@@ -324,10 +336,11 @@ export class DrillRun {
       p.kickArmed = true;
       p.lastKick = -1;
       p.dribDir = null;
+      p.motor = null;
       Object.assign(p.disc, { x: 0, y: 1000, px: 0, py: 1000, vx: 0, vy: 0 });
     }
     // los actores que el ejercicio no coloca se quedan fuera del campo
-    this.ctx = { m, R: this.R, M: this.M, D: this.D, ball: m.ball, rng: this.rng, skill: this.skill, t: 0 };
+    this.ctx = { m, R: this.R, M: this.M, D: this.D, ball: m.ball, rng: this.rng, skill: this.skill, t: 0, hist: [] };
     this.drill.setup(this.ctx);
     this.ctx.m.ball.px = this.ctx.m.ball.x;
     this.ctx.m.ball.py = this.ctx.m.ball.y;
@@ -337,6 +350,10 @@ export class DrillRun {
   step() {
     const ctx = this.ctx;
     for (const p of this.actors) p.input = { x: 0, y: 0, kick: false };
+    const b = ctx.ball;
+    ctx.hist.push({ x: b.x, y: b.y });
+    if (ctx.hist.length > DEF_DELAY + 1) ctx.hist.shift();
+    ctx.seen = ctx.hist[0];
     this.drill.act(ctx);
     this.m.step();
     ctx.t++;
@@ -375,8 +392,20 @@ export function summarize(name, results) {
     out.llega = pct((r) => r.arrived);
     out.soltar = med('release');
     out.soltarEn1s = pct((r) => r.release !== undefined && r.release <= 1);
+    if (name === 'controlPase') {
+      const front = results.filter((r) => r.ang >= 25), back = results.filter((r) => r.ang < 25);
+      const in1 = (rs) => `${Math.round((rs.filter((r) => r.release !== undefined && r.release <= 1).length / Math.max(1, rs.length)) * 100)}%`;
+      out.soltarEn1sNormal = in1(front);
+      out.deEspaldas = `${back.length} casos, en ≤ 1 s ${in1(back)}, mediana ${median(back.map((r) => r.release).filter((x) => x !== undefined))?.toFixed(2)} s`;
+    }
   }
-  if (name === 'conduccion') { out.velocidad = med('speed'); out.separacionMax = med('maxSep'); out.tiempo = med('time'); }
+  if (name === 'conduccion') {
+    for (const [k, zig] of [['recta', false], ['zigzag', true]]) {
+      const rs = results.filter((r) => r.zig === zig);
+      out[k] = `${Math.round((rs.filter((r) => r.ok).length / Math.max(1, rs.length)) * 100)}% bien, velocidad ${med('speed', (r) => r.zig === zig)}`;
+    }
+    out.separacionMax = med('maxSep');
+  }
   if (name === 'giro') out.tiempo = med('time');
   if (name === 'tiro' || name === 'unoContraUno') out.tiempo = med('time', (r) => r.ok);
   if (name === 'unoContraUno') out.conserva2s = pct((r) => r.kept2);

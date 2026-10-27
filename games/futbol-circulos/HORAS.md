@@ -18,4 +18,5 @@
 | 2026-10-26 | Menú principal y online por salas con código (anfitrión con autoridad, lobby, bots de relleno) | 2.5 |
 | 2026-10-26 | IA 5v5: formación zonal que bascula, marcaje por zonas, métrica de espaciado y calibrado | 1.5 |
 | 2026-10-27 | Plan de IA (5v5 + carrera); fase 0: examen de habilidades, métricas de partido, visor de ejercicios | 1.5 |
-| | **Total** | **22.25** |
+| 2026-10-27 | Fase 1 IA: técnica por ensayo con la física (CEM), objetivos calibrados con búsqueda grande, integración y coste | 3.5 |
+| | **Total** | **25.75** |

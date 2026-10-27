@@ -4,6 +4,8 @@
 import { CONTACT, norm, steer, edgeToBall, ballTo, dribble, gauss } from '../ai/skills.js';
 import { trajectory, intercept } from '../ai/evaluate.js';
 import { levelParams } from '../ai/params.js';
+import { makeMotor } from '../ai/motor.js';
+import { DEF_DELAY } from './drills.js';
 
 const P = levelParams(1);
 
@@ -49,4 +51,21 @@ export const legacy = {
   },
 };
 
-export const SKILLSETS = { actual: legacy };
+// 'motor': planificador por ensayo con la física (src/ai/motor.js). Es una fábrica: necesita saber
+// quién más hay en el campo (run.actors) para meterlo en sus ensayos.
+export function motorSkills(onField) {
+  const mot = makeMotor(onField);
+  return {
+    name: 'motor',
+    control: (p, ball) => mot.control(p, ball),
+    pass: (p, ball, tx, ty) => mot.pass(p, ball, tx, ty),
+    dribble: (p, ball, tx, ty) => mot.dribble(p, ball, tx, ty),
+    shoot: (p, ball, tx, ty) => mot.shoot(p, ball, tx, ty),
+    beat: (p, ball, d, gx, gy) => mot.dribble(p, ball, gx, gy, { p: d, gx, gy, delay: DEF_DELAY }),
+  };
+}
+
+export const SKILLSETS = {
+  actual: legacy,
+  motor: (run) => motorSkills(() => run.actors.filter((a) => Math.abs(a.disc.y) < 400)),
+};

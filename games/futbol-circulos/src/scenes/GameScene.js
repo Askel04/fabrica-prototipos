@@ -30,7 +30,7 @@ export class GameScene extends Phaser.Scene {
 
     // la simulación (física, reglas e IA) vive en Match; la escena solo dibuja y lee los controles
     if (this.drillName) {
-      const skill = new URLSearchParams(location.search).get('skill') || 'actual';
+      const skill = new URLSearchParams(location.search).get('skill') || 'motor'; // ?skill=actual: la técnica antigua
       this.drillRun = new DrillRun(this.drillName, SKILLSETS[skill] || SKILLSETS.actual, Date.now() % 100000);
       this.match = this.drillRun.m;
     } else if (this.net) {

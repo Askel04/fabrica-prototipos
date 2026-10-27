@@ -5,8 +5,8 @@
 // (src/ai/params.js). Mismas físicas para todos: los niveles altos deciden mejor, no corren más.
 import { CONFIG as C } from '../config.js';
 import {
-  CONTACT, norm, edgeToBall, gauss, rand, clampField, steer, ballTo, approachAngle,
-  safeKickDir, clearNow, dribble,
+  CONTACT, norm, edgeToBall, gauss, rand, clampField, steer, approachAngle,
+  safeKickDir, clearNow,
 } from './skills.js';
 import {
   trajectory, shotPath, intercept, passSafety, bestShot, threat, laneProb, timeToReach,
@@ -20,6 +20,7 @@ import { fieldScale } from '../stadium.js';
 import { syncEvaluate } from './evaluate.js';
 import { syncSupport } from './support.js';
 import { slotPoint, assignSlots, DEFENDERS } from './formation.js';
+import { makeMotor } from './motor.js';
 
 // medidas del campo actual (cambian con el estadio; Match llama a syncField al crear el partido)
 let W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
@@ -61,6 +62,8 @@ export class TeamBrain {
     this.players = match.players.filter((p) => p.team === team);
     this.opps = match.players.filter((p) => p.team !== team);
     this.attack = this.players[0].attack;
+    // técnica (controlar, pasar, tirar, conducir) por ensayo con la física: src/ai/motor.js
+    this.motor = makeMotor(() => match.players);
     this.w = { ...DEFAULT_WEIGHTS, ...TRAINED, ...(weights || {}) };
     this.noise = { x: 0, y: 0, vx: 0, vy: 0 };
     this.adapt = { sectors: [0, 0, 0], long: 0, short: 0, biasY: 0, holdBonus: 0 };
@@ -421,19 +424,12 @@ export class TeamBrain {
 
   // Ir a por el balón suelto al punto de intercepción predicho (dentro del horizonte del nivel).
   // Si el balón llega rápido, control orientado: correr con él para amortiguarlo.
+  // Ir a por el balón y controlarlo (control orientado hacia la portería rival); controlado → carry.
   chase(p) {
     const real = this.m.ball;
     const speed = Math.hypot(real.vx, real.vy);
-    const dist = Math.hypot(real.x - p.disc.x, real.y - p.disc.y);
     if (edgeToBall(p, real) < 28 && speed < 2.2) return this.carry(p);
-    if (speed > 2.2 && dist < 70) {
-      const [ux, uy] = norm(real.vx, real.vy);
-      const ahead = (p.disc.x - real.x) * ux + (p.disc.y - real.y) * uy;
-      if (ahead > 0) return steer(p, real.x + ux * (CONTACT + 4), real.y + uy * (CONTACT + 4), 1, 8);
-      if (edgeToBall(p, real) < 28) return this.carry(p);
-    }
-    const it = intercept(p, this.path, this.P.horizonTicks);
-    return steer(p, it.x - this.attack * CONTACT * 0.5, it.y, 1, 10);
+    this.motor.control(p, real, [this.attack, 0]);
   }
 
   // ---------------- con balón (utilidad + softmax + compromiso) ----------------
@@ -454,7 +450,8 @@ export class TeamBrain {
     const ownHalf = ball.x * a < 0;
     if (oppNear < CONTACT + 12 && (!p.act || p.act.type === 'dribble')) {
       if (ownHalf && safeKickDir(p, ball) && approachAngle(p, ball, a * W, 0) > 0.6) return clearNow(p, ball);
-      return ballTo(p, ball, a * W, ownHalf ? ball.y * 0.5 : 0, { mode: 'kick', aimErr: gauss(P.aim), kickAngle: ownHalf ? 1.0 : 0.55 });
+      // disputado: sacarlo hacia delante (poco exigente con la puntería)
+      return this.motor.pass(p, ball, a * W, ownHalf ? ball.y * 0.5 : 0, 1, 25);
     }
 
     const act = p.act;
@@ -475,14 +472,17 @@ export class TeamBrain {
       const a = this.attack;
       const opts = [[ball.x + a * 220, H], [ball.x + a * 220, -H], [ball.x + a * 40, H], [ball.x + a * 40, -H]];
       const [tx, ty] = minBy(opts, ([x, y]) => approachAngle(p, ball, x, y));
-      return ballTo(p, ball, tx, ty, { mode: 'kick', aimErr: act.err, kickAngle: 1.1 });
+      return this.motor.pass(p, ball, tx, ty, 1, 20);
     }
     if (act.type === 'fake') { p.input.x = act.dx; p.input.y = act.dy; return; }
-    if (act.type === 'dribble') return dribble(p, ball, act.tx, act.ty, 0.04 + 0.05 * this.P.theta);
-    // con tiempo (ningún rival cerca) termina de orientarse; los niveles bajos no tienen esa paciencia
+    if (act.type === 'dribble') return this.motor.dribble(p, ball, act.tx, act.ty);
+    // error de ejecución del nivel: el objetivo gira act.err radianes alrededor del balón
+    const c = Math.cos(act.err || 0), sn = Math.sin(act.err || 0);
+    const dx = act.tx - ball.x, dy = act.ty - ball.y;
+    const tx = ball.x + dx * c - dy * sn, ty = ball.y + dx * sn + dy * c;
+    if (act.type === 'shot') return this.motor.shoot(p, ball, tx, ty);
     const tOpp = Math.min(...this.opps.map((o) => timeToReach(o, ball.x, ball.y)));
-    const patient = this.P.theta >= 0.4 && tOpp > 30;
-    ballTo(p, ball, act.tx, act.ty, { mode: act.mode, aimErr: act.err, kickAngle: act.kickAngle, patient });
+    this.motor.pass(p, ball, tx, ty, 3, null, tOpp);
   }
 
   // Tras pasar: correr al espacio para pedir la pared (si el nivel la conoce).
