@@ -20,4 +20,5 @@
 | 2026-10-27 | Plan de IA (5v5 + carrera); fase 0: examen de habilidades, métricas de partido, visor de ejercicios | 1.5 |
 | 2026-10-27 | Fase 1 IA: técnica por ensayo con la física (CEM), objetivos calibrados con búsqueda grande, integración y coste | 3.5 |
 | 2026-10-27 | Pulido de técnica: zigzag con anticipación, planes "llegar y golpear" y "rodear y salir", tiro con postes | 2 |
-| | **Total** | **27.75** |
+| 2026-10-27 | Fase 2 IA: pautas de decisión (primera, suelta rápido, ¿me da tiempo?, línea cerrada, ir a recibir, presión, apoyo corto), evaluación paralela | 3.5 |
+| | **Total** | **31.25** |

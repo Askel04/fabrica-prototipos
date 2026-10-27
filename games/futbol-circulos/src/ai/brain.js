@@ -14,13 +14,13 @@ import {
 } from './evaluate.js';
 import { levelParams } from './params.js';
 import { perceive } from './perception.js';
-import { assignSpots } from './support.js';
+import { assignSpots, passSafetyTo } from './support.js';
 import TRAINED from './weights.js';
 import { fieldScale } from '../stadium.js';
 import { syncEvaluate } from './evaluate.js';
 import { syncSupport } from './support.js';
 import { slotPoint, assignSlots, DEFENDERS } from './formation.js';
-import { makeMotor } from './motor.js';
+import { makeMotor, estimateKick } from './motor.js';
 
 // medidas del campo actual (cambian con el estadio; Match llama a syncField al crear el partido)
 let W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF;
@@ -29,7 +29,7 @@ export function syncField() {
   syncEvaluate();
   syncSupport();
 }
-const SEPARATE = new Set(['support', 'support3', 'zone', 'shadow', 'press2', 'cover']);
+const SEPARATE = new Set(['support', 'support3', 'zone', 'shadow', 'press2', 'cover', 'short']);
 const ticks = (ms) => Math.max(1, Math.round((ms * C.TICK_HZ) / 1000));
 
 // Pesos de las utilidades (tools/train.mjs puede reajustarlos y guardarlos en weights.js).
@@ -42,6 +42,16 @@ export const DEFAULT_WEIGHTS = {
   align: 0.9, // coste de tener que rodear el balón
   human: 0.2, // extra por jugar con el humano
   oneTwo: 1.2, // devolver la pared
+  // pautas de decisión (fase 2; el autojuego de la fase 3 ajusta cuánto pesan)
+  quick: 0.6, // suelta rápido si te presionan: extra a los pases seguros según la presión
+  firstTime: 0.55, // pase de primeras: utilidad mínima del mejor pase para jugarlo al primer toque
+  firstTimeSlack: 22, // ticks de margen (rival − balón) por debajo de los cuales se piensa en la primera
+  execMargin: 4, // ticks de margen entre lo que tarda en golpear y lo que tarda en llegar el rival
+  execCheck: 1, // 0 = no comprobar el tiempo de ejecución (ablaciones)
+  pressTrig: 1, // pauta "salta a presionar" (recibe, de espaldas, en banda); 0 = desactivada
+  shortSupport: 1, // pauta "apoyo corto": el más cercano se ofrece con línea de pase libre
+  shortDist: 120, // … a esta distancia del balón
+  shortPress: 110, // … cuando hay un rival a menos de esto del balón
   // desmarque (puntos de apoyo)
   supPass: 2.0, supShot: 1.0, supDist: 1.5, supSpace: 1.0, supAdv: 0.8,
   supMate: 1.2, supRole: 2.0, supMove: 0.6,
@@ -99,6 +109,9 @@ export class TeamBrain {
 
   // un jugador propio chutó (lo llama Match): si es un tiro a puerta o un despeje largo, debe rotar
   onOwnKick(p, ball) {
+    // pase: el destinatario pasa a recibir (va al balón) en vez de seguir en su zona
+    if (p.act?.type === 'pass' && p.act.to && !p.act.to.human) p.act.to.receiving = { until: this.m.tick + 120, from: p };
+    else if (p.firstTime?.to && !p.firstTime.to.human) p.firstTime.to.receiving = { until: this.m.tick + 120, from: p };
     const a = this.attack;
     const path = trajectory(ball.x, ball.y, ball.vx, ball.vy, 90);
     const end = path[path.length - 1];
@@ -155,7 +168,9 @@ export class TeamBrain {
       if (m.tick - this.phaseSince >= 9 || (raw === 'attack' && !owner.human && edgeToBall(owner, ball) < 4)) this.phase = raw;
     } else this.phaseCand = null;
     const phase = this.phase;
-    this.owner = raw === 'loose' ? null : owner;
+    const newOwner = raw === 'loose' ? null : owner;
+    if (newOwner && newOwner.ref !== this.owner?.ref) this.ownerSince = m.tick;
+    this.owner = newOwner;
 
     // predicción del balón y tiempos de intercepción (con el horizonte del nivel)
     this.path = trajectory(ball.x, ball.y, ball.vx, ball.vy, 120);
@@ -224,7 +239,7 @@ export class TeamBrain {
 
   // ---- 5v5: el 1.º va al balón; el resto ocupa los puestos de una formación que bascula ----
   zonalThink(first, ours, phase, raw, itOf, tOpp, ais) {
-    const { P, m, ball } = this;
+    const { P, m, ball, w } = this;
     const a = this.attack;
     const k = fieldScale();
     const kind = ours ? 'attack' : phase === 'defend' && raw !== 'loose' && this.owner ? 'defend' : 'loose';
@@ -236,6 +251,17 @@ export class TeamBrain {
     const jobs = new Map();
     jobs.set(first, ours ? 'carry' : kind === 'defend' ? 'press' : 'chase');
     for (const p of rest) jobs.set(p, ours ? (DEFENDERS.has(p.slotName) && p.slotName !== 'MC' ? 'support3' : 'support') : 'zone');
+    // pauta "apoyo corto": con el balón nuestro y el poseedor presionado, el compañero más cercano se
+    // ofrece cerca y con la línea de pase libre, para que tenga una salida rápida
+    const ourBall = ours || (m.lastTouch?.team === this.team && first && edgeToBall(first, ball) < 30);
+    const pressed = Math.min(...this.oppsV.map((o) => Math.hypot(o.disc.x - ball.x, o.disc.y - ball.y))) < w.shortPress;
+    if (w.shortSupport && ourBall && pressed) {
+      const near = minBy(rest.filter((q) => !q.human && q.slotName !== 'LI' && q.slotName !== 'LD'), (q) => Math.hypot(q.disc.x - ball.x, q.disc.y - ball.y));
+      if (near) {
+        near.shortSpot = this.shortSpot(near, ball);
+        if (near.shortSpot) jobs.set(near, 'short');
+      }
+    }
     if (!ours) {
       const near = (p) => Math.hypot(p.disc.x - ball.x, p.disc.y - ball.y);
       const ais2 = rest.filter((p) => !p.human);
@@ -281,6 +307,26 @@ export class TeamBrain {
       p.job = job;
     }
     this.updateSpots();
+  }
+
+  // punto de apoyo corto: a ~100 del balón, en el ángulo con la línea de pase más segura (y hacia
+  // delante si se puede), con histéresis para no bailar
+  shortSpot(p, ball) {
+    const { w } = this;
+    const a = this.attack;
+    const k = fieldScale();
+    let best = null;
+    for (let i = -4; i <= 4; i++) {
+      const ang = (i / 4) * 2.1; // de -120° a 120° respecto a la dirección de ataque
+      const r = w.shortDist * k;
+      const [x, y] = clampField(ball.x + Math.cos(ang) * r * a, ball.y + Math.sin(ang) * r, 25);
+      const safe = passSafetyTo(ball, x, y, this.oppsV, this.P.passMarginTicks);
+      const fwd = Math.cos(ang) * 0.15;
+      const stay = p.shortSpot ? Math.max(0, 1 - Math.hypot(x - p.shortSpot.x, y - p.shortSpot.y) / 80) * 0.1 : 0;
+      const s = safe + fwd + stay - Math.hypot(x - p.disc.x, y - p.disc.y) / 1500;
+      if (!best || s > best.s) best = { x, y, s };
+    }
+    return best;
   }
 
   slotPointOf(p) {
@@ -404,6 +450,13 @@ export class TeamBrain {
 
   actJob(p) {
     p.input.kick = false;
+    // me han pasado el balón: ir a recibirlo (hasta tocarlo, o si lo toca otro)
+    const rc = p.receiving;
+    if (rc) {
+      const lt = this.m.lastTouch;
+      if (rc.until < this.m.tick || (lt && lt !== rc.from)) p.receiving = null;
+      else return this.chase(p);
+    }
     switch (p.job) {
       case 'carry': return this.carry(p);
       case 'chase': return this.chase(p);
@@ -418,6 +471,7 @@ export class TeamBrain {
       case 'shadow': return this.shadow(p);
       case 'rotate': return this.rotateBack(p);
       case 'zone': return this.zone(p);
+      case 'short': return p.shortSpot ? steer(p, p.shortSpot.x, p.shortSpot.y, 1) : this.zone(p);
       default: return steer(p, p.disc.x, p.disc.y, 0);
     }
   }
@@ -429,7 +483,51 @@ export class TeamBrain {
     const real = this.m.ball;
     const speed = Math.hypot(real.vx, real.vy);
     if (edgeToBall(p, real) < 28 && speed < 2.2) return this.carry(p);
+    // ya había decidido qué hacer con el balón y lo tiene cerca: seguir (aunque se mueva al prepararlo)
+    const act = p.act;
+    if (act && act.type !== 'dribble' && act.type !== 'fake' && this.m.tick - act.start < 60 && edgeToBall(p, real) < 40) return this.carry(p);
+    if (this.P.oneTouch && this.firstTime(p, real)) return;
+    p.firstTime = null;
     this.motor.control(p, real, [this.attack, 0]);
+  }
+
+  // Pase de primeras: si el balón me llega de un compañero y al recibirlo voy a tener un rival
+  // encima, elegir ya el destino (desde el punto donde lo recibiré) y jugarlo al primer toque.
+  firstTime(p, ball) {
+    const { m, w, P } = this;
+    const a = this.attack;
+    const from = m.lastTouch;
+    if (!from || from === p || from.team !== this.team) return false;
+    const path = trajectory(ball.x, ball.y, ball.vx, ball.vy, 90);
+    const it = intercept(p, path, 90);
+    if (it.t > 70) return false;
+    const opps = this.opps;
+    const tOpp = Math.min(...opps.map((o) => timeToReach(o, it.x, it.y)));
+    const slack = tOpp - it.t;
+    // decisión tomada hace poco: mantenerla (no cambiar de idea con el balón llegando)
+    const prev = p.firstTime;
+    if (prev && m.tick - prev.tick < 30) {
+      this.motor.pass(p, ball, prev.tx, prev.ty, 3, null, Math.max(0, slack));
+      return true;
+    }
+    if (slack > w.firstTimeSlack) return false; // hay tiempo para controlar
+    let best = null;
+    for (const mt of this.players) {
+      if (mt === p) continue;
+      const lead = 10;
+      const [tx, ty] = clampField(mt.disc.x + mt.disc.vx * lead, mt.disc.y + mt.disc.vy * lead, 18);
+      const d = Math.hypot(tx - it.x, ty - it.y);
+      if (d < 60) continue;
+      const ps = passSafety(shotPath(it.x, it.y, tx, ty, KICK_SPEED, 100), mt, opps, P.passMarginTicks);
+      // no hacia la propia portería cerca de ella
+      if ((tx - it.x) * a < -40 && Math.hypot(it.x + a * W, it.y) < 220) continue;
+      const u = ps.p * (threat(tx, ty, a) + 0.3);
+      if (!best || u > best.u) best = { u, tx, ty, p: ps.p, to: mt };
+    }
+    if (!best || best.p < w.firstTime) return false;
+    p.firstTime = { tx: best.tx, ty: best.ty, tick: m.tick, to: best.to };
+    this.motor.pass(p, ball, best.tx, best.ty, 3, null, Math.max(0, slack));
+    return true;
   }
 
   // ---------------- con balón (utilidad + softmax + compromiso) ----------------
@@ -445,14 +543,10 @@ export class TeamBrain {
       p.act = { type: 'kick', mode: 'kick', tx: a * W, ty: rand(H), until: m.tick + 30, err: rand(0.6), kickAngle: 1.2, start: m.tick };
     }
 
-    // balón disputado: pelearlo; en campo propio despejar si es seguro
+    // rival ya encima del balón en mi tercio: despejar si se puede hacerlo ya y hacia fuera
     const oppNear = Math.min(...this.opps.map((o) => Math.hypot(o.disc.x - ball.x, o.disc.y - ball.y)));
-    const ownHalf = ball.x * a < 0;
-    if (oppNear < CONTACT + 12 && (!p.act || p.act.type === 'dribble')) {
-      if (ownHalf && safeKickDir(p, ball) && approachAngle(p, ball, a * W, 0) > 0.6) return clearNow(p, ball);
-      // disputado: sacarlo hacia delante (poco exigente con la puntería)
-      return this.motor.pass(p, ball, a * W, ownHalf ? ball.y * 0.5 : 0, 1, 25);
-    }
+    const ownThird = ball.x * a < -W * 0.35;
+    if (oppNear < CONTACT + 4 && ownThird && safeKickDir(p, ball) && approachAngle(p, ball, a * W, 0) > 0.6) return clearNow(p, ball);
 
     const act = p.act;
     const done = act && ((act.mode === 'kick' && p.lastKick > act.start) ||
@@ -460,8 +554,23 @@ export class TeamBrain {
     if (done && act.type === 'pass') this.afterPass(p, act);
     const req = m.passRequests?.[p.team] ?? -1e9;
     const requested = req > (act?.start ?? -1) && m.tick - req < 90;
-    if (!act || done || m.tick > act.until || requested) p.act = this.decide(p);
+    // conduciendo y llega un rival: replantearse (soltarla, protegerla o seguir)
+    const pressed = act?.type === 'dribble' && oppNear < CONTACT + 25 && m.tick - act.start > 6;
+    // preparando un pase: si un rival ha cerrado la línea mientras tanto, pensar otra cosa
+    let closed = false;
+    if (act?.type === 'pass' && act.to && !done && (m.tick - act.start) % 6 === 5) {
+      const mode = act.mode === 'kick' ? KICK_SPEED : PUSH_SPEED;
+      const ps = passSafety(shotPath(ball.x, ball.y, act.tx, act.ty, mode, 100), act.to, this.oppsV || this.opps, P.passMarginTicks);
+      closed = ps.p < 0.45;
+    }
+    if (!act || done || m.tick > act.until || requested || pressed || closed) p.act = this.decide(p);
     this.execute(p, p.act);
+    // último momento: va a golpear un pase y la línea está cerrada (según lo que ve) → no chutar
+    const a2 = p.act;
+    if (p.input.kick && a2?.type === 'pass' && a2.to && edgeToBall(p, ball) <= C.KICK_DIST + 2) {
+      const ps = passSafety(shotPath(ball.x, ball.y, a2.tx, a2.ty, KICK_SPEED, 100), a2.to, this.oppsV || this.opps, P.passMarginTicks * 0.5);
+      if (ps.p < 0.35) { p.input.kick = false; p.act = null; }
+    }
   }
 
   execute(p, act) {
@@ -509,7 +618,7 @@ export class TeamBrain {
     // zona de peligro: cerca de la propia portería, o en el propio tercio con un rival encima
     const ownThird = ball.x * a < -W * 0.35;
     const k = fieldScale();
-    const danger = fromOwnGoal < 150 * k || (ownThird && pressure > 0.4);
+    const danger = fromOwnGoal < 120 * k || (ownThird && pressure > 0.6);
     const value = (x, y) => threat(x, y, a) + 0.15;
 
     // tiro al centro del mayor hueco libre
@@ -521,6 +630,7 @@ export class TeamBrain {
     }
 
     // pases: al pie, al espacio (al punto de apoyo hacia el que corre) y a la banda
+    let safest = 0; // seguridad del mejor pase que no va hacia atrás
     for (const mt of this.players) {
       if (mt === p) continue;
       const lead = mt.human ? 6 : 10;
@@ -548,13 +658,17 @@ export class TeamBrain {
         if (mt.run && mt.run.until > tick) u += w.oneTwo * 0.5 * ps.p;
         // atrás al último hombre: dejada bajo presión (niveles que la conocen) o para reiniciar
         if (mt.job === 'support3' && !danger) u *= P.drop && pressure > 0.5 ? 1 : 0.6;
+        // pauta "suelta rápido": con presión, los pases seguros ganan frente a seguir con el balón
+        u *= 1 + w.quick * pressure * ps.p;
         // en zona de peligro solo pases seguros y nunca hacia la propia portería
         if (danger && (ps.p < 0.75 || (tx - ball.x) * a < -40)) continue;
+        if ((tx - ball.x) * a > -40) safest = Math.max(safest, ps.p);
         opts.push({ u, type: 'pass', mode, tx, ty, kind, to: mt, noise: P.passAim, kickAngle: P.align * 1.6 });
       }
     }
 
-    if (danger) {
+    // despejar solo en peligro y si no hay ningún pase seguro
+    if (danger && safest < 0.65) {
       const side = ball.y >= 0 ? 1 : -1;
       opts.push({ u: w.clear * (0.5 + pressure), type: 'clear', mode: 'kick', tx: ball.x + a * 220, ty: side * H, noise: P.aim });
     }
@@ -571,7 +685,7 @@ export class TeamBrain {
         if (forward < -0.3 && fromOwnGoal < 230) continue;
         const tO = Math.min(...opps.map((o) => timeToReach(o, qx, qy)));
         const space = 1 / (1 + Math.exp(-(tO - timeToReach(p, qx, qy) - 6) / 8));
-        let u = w.dribble * tr.dribble * value(qx, qy) * space * (1 - 0.6 * pressure) * align(qx, qy);
+        let u = w.dribble * tr.dribble * value(qx, qy) * space * (1 - 0.85 * pressure) * align(qx, qy);
         if (calm && forward > -0.2) u += w.hold * space * (0.5 + 0.5 * forward);
         opts.push({ u, type: 'dribble', mode: 'push', tx: ball.x + Math.cos(ang) * 120, ty: ball.y + Math.sin(ang) * 120 });
       }
@@ -583,6 +697,19 @@ export class TeamBrain {
       }
     }
 
+    // ¿le da tiempo a ejecutarlo? Para las mejores opciones de golpeo, el planificador estima en
+    // cuántos ticks podría chutar; si el rival llega antes, la opción vale mucho menos.
+    if (P.execCheck && w.execCheck) {
+      const real = m.ball;
+      const top = opts.filter((o) => o.type === 'pass' || o.type === 'shot').sort((x, y) => y.u - x.u).slice(0, 3);
+      for (const o of top) {
+        const kt = estimateKick(p, real, m.players, o.tx, o.ty, o.type === 'shot');
+        o.kt = kt;
+        if (kt === Infinity) o.u *= 0.3;
+        else if (kt > tOpp - w.execMargin) o.u *= 0.25;
+        else o.u *= Math.exp(-kt / 90);
+      }
+    }
     const pick = softmaxTop(opts, P.temperature, 4);
     return {
       ...pick, err: gauss(pick.noise || 0), start: tick,
@@ -623,14 +750,28 @@ export class TeamBrain {
       [gx, gy] = norm(gx * (1 - shade) + rx * shade, gy * (1 - shade) + ry * shade);
     }
     const controlled = this.owner && edgeToBall(this.owner, ball) < 6;
-    const close = controlled ? P.standOff : P.bodyBlock ? CONTACT - 2 : CONTACT + 4;
-    steer(p, ball.x + gx * close, ball.y + gy * close, P.pressSpeed, 12);
+    // disparadores de presión: atacar el balón (no esperar) si el rival acaba de recibir o aún no lo
+    // controla, va hacia su portería (de espaldas) o está pegado a la banda
+    const trig = P.pressTriggers && this.owner && this.pressTrigger(this.owner, ball);
+    const close = controlled && !trig ? P.standOff : P.bodyBlock ? CONTACT - 2 : CONTACT + 4;
+    steer(p, ball.x + gx * close, ball.y + gy * close, trig ? 1 : P.pressSpeed, 12);
     if (P.bodyBlock && !controlled && Math.hypot(p.disc.x - ball.x, p.disc.y - ball.y) < CONTACT + 22) {
       const [bx, by] = norm(ball.x - p.disc.x, ball.y - p.disc.y);
       p.input.x = p.input.x * 0.5 + bx * 0.5;
       p.input.y = p.input.y * 0.5 + by * 0.5;
     }
     this.pinch(p);
+  }
+
+  pressTrigger(o, ball) {
+    const { m, w } = this;
+    if (!w.pressTrig) return false;
+    const d = o.disc;
+    const justGot = m.tick - (this.ownerSince ?? -1e9) < 25; // recibió hace menos de 0,4 s
+    const loose = edgeToBall(o, ball) > 6 || Math.hypot(ball.vx - d.vx, ball.vy - d.vy) > 0.7;
+    const backwards = d.vx * o.attack < -0.4; // va hacia su propia portería
+    const touchline = Math.abs(ball.y) > H - 45;
+    return justGot || loose || backwards || touchline;
   }
 
   // Segundo presionador (Difícil, rival en su campo): cortar el pase corto más peligroso.

@@ -48,10 +48,11 @@ export function matchStats(level, size = 5, games = 3, minutes = 2, levels = nul
           cur.ctl = true;
           controlled++;
         }
-        // presión a tiempo: un rival llega a ≤ 40 del receptor en ≤ 0,5 s (si había uno a < 120)
+        // presión a tiempo: un rival llega a ≤ 60 del receptor (distancia de contención) en ≤ 0,5 s,
+        // si había uno a < 120 al recibir
         if (!cur.pressed && cur.nearDef < 120 && m.tick - cur.t <= 30) {
           const opps = m.players.filter((q) => q.team !== cur.p.team);
-          if (opps.some((q) => Math.hypot(q.disc.x - d.x, q.disc.y - d.y) < 40)) { cur.pressed = true; pressedInTime++; }
+          if (opps.some((q) => Math.hypot(q.disc.x - d.x, q.disc.y - d.y) < 60)) { cur.pressed = true; pressedInTime++; }
         }
       }
       if (t % 10 || m.state !== 'play') continue;

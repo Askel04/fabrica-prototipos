@@ -94,3 +94,37 @@ En partido las cifras apenas cambian: 43 % de recepciones controladas, 27 % de p
 **Coste:** ≈ 1,1 ms/tick de media en Node y en navegador de escritorio; el 5 % peor, 3,7–4,2 ms. El giro replanifica cada tick y es lo más caro; replanificar cada 2 ticks ahorraría un 18 % de cálculo pero deja el giro en 67 %.
 
 **Pendiente:** en el 1 contra 1 supera al defensor empujándolo hacia atrás (4,4 s) más que regateándolo.
+
+## Fase 2 — decisiones (pautas)
+
+Medición: `node tools/decisions.mjs 48 3`. Son 48 partidos de 3 min en 4 procesos, Difícil contra Difícil. Con menos de ~40 partidos, el ruido entre tandas (±5 puntos) tapa cualquier cambio.
+
+**Pautas nuevas.** Cada una tiene su peso en `DEFAULT_WEIGHTS` de `src/ai/brain.js`, para que la fase 3 las ajuste:
+
+| Pauta | Qué hace |
+|---|---|
+| Pase de primeras (`firstTime`, `firstTimeSlack`) | Si al recibir va a tener un rival encima, elige el destino mientras llega el balón y lo juega al primer toque |
+| Suelta rápido (`quick`) | Con presión, los pases seguros ganan frente a seguir conduciendo; conduciendo y con un rival llegando, se replantea la jugada |
+| ¿Me da tiempo? (`execCheck`, `execMargin`) | Para las 3 mejores opciones de golpeo, el planificador de técnica estima cuánto tardaría en chutar; si el rival llega antes, la opción vale mucho menos |
+| Despejar solo si hace falta | Solo en peligro real y sin ningún pase seguro. Se quita el "rival a < 37 → mándala adelante" |
+| Línea cerrada | Mientras prepara el pase y en el último momento antes de golpear, comprueba que la línea sigue libre; si no, decide otra cosa |
+| Ir a recibir | El destinatario de un pase deja su zona y va al balón |
+| Salta a presionar (`pressTrig`) | Ataca el balón (no espera) si el rival acaba de recibir, no lo controla, va de espaldas o está en la banda |
+| Apoyo corto (`shortSupport`, `shortDist`, `shortPress`) | Con el poseedor presionado, el compañero más cercano se ofrece a ~120 con la línea de pase libre |
+
+| Métrica (por equipo) | Fase 1b | Fase 2 | Objetivo |
+|---|---|---|---|
+| Pases buenos por minuto | 2,4 | **4,4–4,8** | ✅ ×2 |
+| Pases que llegan | 69 % | **72–75 %** | |
+| Pérdidas antes de soltar | 22 % | 20–27 % según la tanda | ❌ ≤ 15 % |
+| Presión a tiempo (< 60 en ≤ 0,5 s) | — | **59–68 %** | ⚠️ 70 % |
+| ≥ 3 junto al balón | 3 % | 4,1 % | ⚠️ ≤ 3 % |
+
+Lo aprendido:
+- **Lo que más ha ayudado:** el pase de primeras, ir a recibir, la comprobación de línea cerrada y quitar los despejes a ciegas. Doblan los pases buenos.
+- **Pautas con efecto pequeño o ambiguo:** disparadores de presión, comprobar el tiempo de ejecución y apoyo corto.
+  - El apoyo corto con radio 95 y siempre activo bajó las pérdidas al 20 %, pero a cambio de amontonamiento (6,6 %) y de un "pinball" de paredes al primer toque.
+  - Solo con presión y a 120 no amontona, pero tampoco reduce pérdidas.
+- **El equilibrio de estas pautas no se puede encontrar a mano con este ruido:** es el trabajo de la fase 3 (autojuego con muchas partidas).
+- **Niveles:** Difícil y Normal quedan muy igualados en 5v5 (4-3-5 en 12 partidos), porque las pautas se activan desde Normal. Separarlos es la fase 4.
+- **Coste:** ≈ 1,5 ms/tick de media en navegador de escritorio (el 5 % peor, 4,1 ms).

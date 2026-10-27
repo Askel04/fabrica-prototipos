@@ -335,6 +335,7 @@ function kickObj(tx, ty, aimW = 3, minSpeed = 0, maxErr = 6, rush = 1) {
       spd = Math.hypot(B.vx, B.vy);
     },
     step() { return kt < 0; },
+    result: () => ({ kt: kt >= 0 && err <= maxErr && spd >= minSpeed ? kt : Infinity, err }),
     cost(P, B) {
       if (kt >= 0 && err <= maxErr) return kt * rush + err * aimW + (spd < minSpeed ? (minSpeed - spd) * 25 : 0);
       if (kt >= 0) return H + 150 + err * 3; // golpeo malo: peor que seguir buscándolo
@@ -366,6 +367,7 @@ function shotObj(gx, tx, ty) {
       err = Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * (180 / Math.PI);
     },
     step() { return kt < 0; },
+    result: () => ({ kt: kt >= 0 && inGoal ? kt : Infinity, err }),
     cost(P, B) {
       if (kt >= 0) return inGoal ? kt + err * 0.5 : H + 150 + miss;
       const [ux, uy] = norm(tx - B.x, ty - B.y);
@@ -521,6 +523,27 @@ function farApproach(p, ball, horizonTicks = 120, aim = null) {
   return true;
 }
 
+// Cuántos ticks tardaría en golpear hacia (tx, ty) con la precisión necesaria (Infinity si no lo
+// consigue en el horizonte). Ensayo pequeño (solo semillas); lo usa la decisión para no elegir
+// pases que no le da tiempo a ejecutar antes de que llegue el rival.
+export function estimateKick(p, ball, others, tx, ty, shot = false) {
+  const [ux, uy, dist] = norm(tx - ball.x, ty - ball.y);
+  const d = kickDirFor(ball.vx, ball.vy, ux, uy) || [ux, uy];
+  const qx = ball.x - d[0] * (CONTACT + 4), qy = ball.y - d[1] * (CONTACT + 4);
+  const s = snapshot(p, ball, others);
+  const tol = Math.min(10, (Math.atan2(28, dist) * 180) / Math.PI);
+  const obj = shot ? shotObj(Math.sign(tx) * C.FIELD_W, tx, ty)
+    : kickObj(tx, ty, 3, (dist * (1 - C.BALL_DAMPING)) / C.BALL_DAMPING + 0.6, tol);
+  const seeds = [towards(p, qx, qy, 6), towards(p, ball.x, ball.y, 0), ...aroundSeeds(p, ball, d[0], d[1], [14]), ...arriveKickPlans(ball, tx, ty)];
+  let best = Infinity;
+  for (const pl of seeds) {
+    spent++;
+    rollout(s, pl, obj);
+    best = Math.min(best, obj.result().kt);
+  }
+  return best;
+}
+
 // others(): jugadores que hay en el campo (para meterlos en el ensayo si están cerca)
 export function makeMotor(others) {
   // sin rivales cerca del balón no hace falta replanificar tan a menudo
@@ -553,7 +576,7 @@ export function makeMotor(others) {
         const w = aimW / (1 + waited / 45) / (1 + press);
         // error admisible: que el balón pase a pie del receptor (≈ 28 de margen a esa distancia)
         const base = maxErr ?? Math.min(10, (Math.atan2(28, Math.hypot(tx - ball.x, ty - ball.y)) * 180) / Math.PI);
-        const tol = base * Math.min(1.5, 1 + waited / 90) * (1 + press);
+        const tol = Math.min(12, base * Math.min(1.5, 1 + waited / 90) * (1 + press));
         const [ux, uy, dist] = norm(tx - ball.x, ty - ball.y);
         const d = kickDirFor(ball.vx, ball.vy, ux, uy) || [ux, uy];
         const qx = ball.x - d[0] * (CONTACT + 4), qy = ball.y - d[1] * (CONTACT + 4);
