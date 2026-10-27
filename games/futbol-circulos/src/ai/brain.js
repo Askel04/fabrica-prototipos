@@ -49,6 +49,10 @@ export const DEFAULT_WEIGHTS = {
   execMargin: 4, // ticks de margen entre lo que tarda en golpear y lo que tarda en llegar el rival
   execCheck: 1, // 0 = no comprobar el tiempo de ejecución (ablaciones)
   pressTrig: 1, // pauta "salta a presionar" (recibe, de espaldas, en banda); 0 = desactivada
+  progress: 0.6, // pauta "busca la portería": valor extra por adelantar el balón (pases y conducción)
+  firstShot: 0.3, // remate de primeras si la calidad del tiro desde donde llega el balón supera esto
+  space: 1, // pauta "pase al hueco": probar destinos en el espacio por delante de cada compañero
+  runs: 1, // pauta "desmárcate": atacar la espalda de la defensa cuando el equipo tiene el balón
   shortSupport: 1, // pauta "apoyo corto": el más cercano se ofrece con línea de pase libre
   shortDist: 120, // … a esta distancia del balón
   shortPress: 110, // … cuando hay un rival a menos de esto del balón
@@ -251,12 +255,37 @@ export class TeamBrain {
     const jobs = new Map();
     jobs.set(first, ours ? 'carry' : kind === 'defend' ? 'press' : 'chase');
     for (const p of rest) jobs.set(p, ours ? (DEFENDERS.has(p.slotName) && p.slotName !== 'MC' ? 'support3' : 'support') : 'zone');
+    // pauta "desmárcate": con el balón controlado y tiempo para pasar, 1–2 de los de arriba atacan la
+    // espalda del último defensor rival (desmarque de ruptura) en vez de esperar en su zona
+    for (const q of rest) if (q.deepRun && (q.deepRun.until < m.tick || !ours)) q.deepRun = null;
+    if (w.runs && ours && P.through) {
+      const oppNear = Math.min(...this.oppsV.map((o) => Math.hypot(o.disc.x - ball.x, o.disc.y - ball.y)));
+      const lastLine = Math.max(...this.oppsV.map((o) => o.disc.x * a)); // el rival más retrasado
+      const maxRuns = P.theta >= 0.8 ? 2 : 1;
+      let active = rest.filter((q) => q.deepRun).length;
+      if (oppNear > 60) {
+        const cands = rest.filter((q) => !q.human && !q.deepRun && (q.slotName === 'EI' || q.slotName === 'ED' || q.slotName === 'MC') &&
+          (q.runCooldown ?? 0) < m.tick)
+          .sort((x, y) => y.disc.x * a - x.disc.x * a);
+        for (const q of cands) {
+          if (active >= maxRuns) break;
+          const tx = Math.min(W - 45, Math.max(q.disc.x * a + 70, lastLine + 55));
+          if (tx - q.disc.x * a < 40) continue;
+          const ty = Math.max(-H + 40, Math.min(H - 40, q.disc.y * 0.8));
+          q.deepRun = { x: tx * a, y: ty, until: m.tick + 130 };
+          q.runCooldown = m.tick + 240;
+          active++;
+        }
+      }
+      for (const q of rest) if (q.deepRun && !q.human) jobs.set(q, 'run');
+    }
+
     // pauta "apoyo corto": con el balón nuestro y el poseedor presionado, el compañero más cercano se
     // ofrece cerca y con la línea de pase libre, para que tenga una salida rápida
     const ourBall = ours || (m.lastTouch?.team === this.team && first && edgeToBall(first, ball) < 30);
     const pressed = Math.min(...this.oppsV.map((o) => Math.hypot(o.disc.x - ball.x, o.disc.y - ball.y))) < w.shortPress;
     if (w.shortSupport && ourBall && pressed) {
-      const near = minBy(rest.filter((q) => !q.human && q.slotName !== 'LI' && q.slotName !== 'LD'), (q) => Math.hypot(q.disc.x - ball.x, q.disc.y - ball.y));
+      const near = minBy(rest.filter((q) => !q.human && !q.deepRun && q.slotName !== 'LI' && q.slotName !== 'LD'), (q) => Math.hypot(q.disc.x - ball.x, q.disc.y - ball.y));
       if (near) {
         near.shortSpot = this.shortSpot(near, ball);
         if (near.shortSpot) jobs.set(near, 'short');
@@ -303,7 +332,10 @@ export class TeamBrain {
     }
     for (const p of ais) {
       const job = jobs.get(p) || 'zone';
-      if (job !== 'carry' && job !== 'chase') { p.carryStart = null; p.act = null; }
+      // quien tiene el balón pegado conserva lo que iba a hacer aunque cambie la rotación
+      const holding = edgeToBall(p, m.ball) < 20;
+      if (job !== 'carry' && job !== 'chase' && !holding) { p.carryStart = null; p.act = null; }
+      if (holding && p.act && job !== 'carry' && job !== 'chase') { p.job = 'chase'; continue; }
       p.job = job;
     }
     this.updateSpots();
@@ -472,6 +504,7 @@ export class TeamBrain {
       case 'rotate': return this.rotateBack(p);
       case 'zone': return this.zone(p);
       case 'short': return p.shortSpot ? steer(p, p.shortSpot.x, p.shortSpot.y, 1) : this.zone(p);
+      case 'run': return p.deepRun ? steer(p, p.deepRun.x, p.deepRun.y, 1, 8) : this.zone(p);
       default: return steer(p, p.disc.x, p.disc.y, 0);
     }
   }
@@ -507,7 +540,15 @@ export class TeamBrain {
     // decisión tomada hace poco: mantenerla (no cambiar de idea con el balón llegando)
     const prev = p.firstTime;
     if (prev && m.tick - prev.tick < 30) {
-      this.motor.pass(p, ball, prev.tx, prev.ty, 3, null, Math.max(0, slack));
+      if (prev.shot) this.motor.shoot(p, ball, prev.tx, prev.ty, Math.max(0, slack));
+      else this.motor.pass(p, ball, prev.tx, prev.ty, 3, null, Math.max(0, slack));
+      return true;
+    }
+    // remate de primeras: balón que llega en zona de tiro con hueco
+    const sh = bestShot({ x: it.x, y: it.y }, opps, a);
+    if (sh.dist < 300 * fieldScale() && sh.quality > w.firstShot) {
+      p.firstTime = { tx: sh.x, ty: sh.y, tick: m.tick, shot: true };
+      this.motor.shoot(p, ball, sh.x, sh.y, Math.max(0, slack));
       return true;
     }
     if (slack > w.firstTimeSlack) return false; // hay tiempo para controlar
@@ -589,8 +630,8 @@ export class TeamBrain {
     const c = Math.cos(act.err || 0), sn = Math.sin(act.err || 0);
     const dx = act.tx - ball.x, dy = act.ty - ball.y;
     const tx = ball.x + dx * c - dy * sn, ty = ball.y + dx * sn + dy * c;
-    if (act.type === 'shot') return this.motor.shoot(p, ball, tx, ty);
     const tOpp = Math.min(...this.opps.map((o) => timeToReach(o, ball.x, ball.y)));
+    if (act.type === 'shot') return this.motor.shoot(p, ball, tx, ty, tOpp);
     this.motor.pass(p, ball, tx, ty, 3, null, tOpp);
   }
 
@@ -619,7 +660,8 @@ export class TeamBrain {
     const ownThird = ball.x * a < -W * 0.35;
     const k = fieldScale();
     const danger = fromOwnGoal < 120 * k || (ownThird && pressure > 0.6);
-    const value = (x, y) => threat(x, y, a) + 0.15;
+    // valor de un punto: amenaza de gol + lo que se adelanta el balón hacia la portería rival
+    const value = (x, y) => threat(x, y, a) + 0.15 + w.progress * Math.max(-0.3, ((x - ball.x) * a) / W);
 
     // tiro al centro del mayor hueco libre
     if (!danger) {
@@ -638,6 +680,17 @@ export class TeamBrain {
       if (P.through) {
         if (mt.spot && !mt.human) targets.push([mt.spot.x, mt.spot.y, 'through']);
         else targets.push([mt.disc.x + a * 70 + mt.disc.vx * 15, mt.disc.y + mt.disc.vy * 15, 'through']);
+        // pase al hueco: puntos en el espacio por delante del compañero (y hacia donde corre); vale
+        // si, siguiendo el recorrido del balón, él llega antes que cualquier rival (passSafety)
+        if (w.space && (mt.disc.x - ball.x) * a > -60) {
+          const k = fieldScale();
+          for (const ang of [-0.9, -0.45, 0, 0.45, 0.9]) {
+            for (const dd of [70, 130, 190]) {
+              const r = dd * k;
+              targets.push([mt.disc.x + Math.cos(ang) * r * a + mt.disc.vx * 10, mt.disc.y + Math.sin(ang) * r + mt.disc.vy * 10, 'space']);
+            }
+          }
+        }
       }
       if (P.wallPass) {
         const wy = mt.disc.y > ball.y ? H : -H;
@@ -647,7 +700,7 @@ export class TeamBrain {
         if (kind !== 'wall') [tx, ty] = clampField(tx, ty, 18);
         const d = Math.hypot(tx - ball.x, ty - ball.y);
         if (d < 50) continue;
-        const mode = d > (kind === 'feet' ? 130 : 180) || kind === 'wall' ? 'kick' : 'push';
+        const mode = d > (kind === 'feet' ? 130 : 180) || kind === 'wall' || kind === 'space' ? 'kick' : 'push';
         const ps = passSafety(shotPath(ball.x, ball.y, tx, ty, mode === 'kick' ? KICK_SPEED : PUSH_SPEED, 100), mt, opps, P.passMarginTicks);
         let u = w.pass * tr.pass * ps.p * value(ps.x, ps.y) * align(tx, ty);
         if (mt.human) u += w.human * ps.p;
@@ -686,7 +739,7 @@ export class TeamBrain {
         const tO = Math.min(...opps.map((o) => timeToReach(o, qx, qy)));
         const space = 1 / (1 + Math.exp(-(tO - timeToReach(p, qx, qy) - 6) / 8));
         let u = w.dribble * tr.dribble * value(qx, qy) * space * (1 - 0.85 * pressure) * align(qx, qy);
-        if (calm && forward > -0.2) u += w.hold * space * (0.5 + 0.5 * forward);
+        if (calm && forward > 0.3) u += w.hold * space * forward; // conservar, pero avanzando
         opts.push({ u, type: 'dribble', mode: 'push', tx: ball.x + Math.cos(ang) * 120, ty: ball.y + Math.sin(ang) * 120 });
       }
       // amago: solo con el rival llegando (no encima) y de vez en cuando

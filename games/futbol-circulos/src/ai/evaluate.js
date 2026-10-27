@@ -115,39 +115,34 @@ export function passSafety(path, receiver, opps, marginTicks) {
 // se marcan los libres (ningún rival llega a la trayectoria antes de que cruce la línea) y se
 // apunta al centro del rango libre más ancho, lo más lejos posible del portero.
 export function bestShot(ball, opps, attack, n = 9) {
+  // Para cada punto de la portería: probabilidad de que el tiro pase sin que ningún rival lo toque.
+  // El rival necesita reaccionar (REACT ticks) y el bloqueo es gradual (sigmoide), no todo o nada:
+  // con 5 rivales y tiros largos el criterio estricto daba siempre "ningún hueco".
+  const REACT = 8;
   const gx = attack * (W + 4);
-  const lo = -G + RB + 2, hi = G - RB - 2;
-  const free = [];
+  const lo = -G + RB + 4, hi = G - RB - 4;
+  const ks = W / 370;
+  let best = null;
   for (let i = 0; i < n; i++) {
     const gy = lo + ((hi - lo) * i) / (n - 1);
     const path = shotPath(ball.x, ball.y, gx, gy, KICK_SPEED);
     const end = path[path.length - 1];
-    let ok = end.goal === attack;
-    if (ok) {
-      for (let k = 2; k < path.length && ok; k += 2) {
-        for (const o of opps) if (timeToReach(o, path[k].x, path[k].y) <= path[k].t) { ok = false; break; }
-      }
+    if (end.goal !== attack) continue;
+    let free = 1;
+    for (const o of opps) {
+      let margin = -Infinity; // ventaja (ticks) del rival sobre el balón en el punto donde mejor llega
+      for (let k = 2; k < path.length; k += 2) margin = Math.max(margin, path[k].t - (timeToReach(o, path[k].x, path[k].y) + REACT));
+      free *= 1 - 1 / (1 + Math.exp(-margin / 4)); // margin > 0 → el rival llega: bloqueo probable
     }
-    free.push({ gy, ok });
-  }
-  let best = null, cur = null;
-  for (const f of free) {
-    if (f.ok) {
-      cur = cur || { from: f.gy, to: f.gy, count: 0 };
-      cur.to = f.gy;
-      cur.count++;
-    }
-    if ((!f.ok || f === free[free.length - 1]) && cur) {
-      if (!best || cur.count > best.count) best = cur;
-      cur = null;
-    }
+    // a igualdad, mejor cerca de los palos (lejos del centro, donde suele estar el último hombre)
+    const s = free * (0.85 + 0.15 * Math.abs(gy) / G);
+    if (!best || s > best.s) best = { s, free, gy };
   }
   const dist = Math.hypot(gx - ball.x, ball.y);
   if (!best) return { quality: 0, x: gx, y: 0, dist };
-  const width = best.count / n;
-  // menos calidad desde lejos (el portero tiene tiempo) y desde ángulos cerrados
-  const quality = width * Math.exp(-Math.max(0, dist - 120) / 220);
-  return { quality, x: gx, y: (best.from + best.to) / 2, dist };
+  // menos calidad desde lejos y desde ángulos cerrados
+  const quality = best.free * Math.exp(-Math.max(0, dist - 150 * ks) / (300 * ks));
+  return { quality, x: gx, y: best.gy, dist };
 }
 
 // Amenaza (tipo xT): 0..1 según distancia y ángulo a la portería que se ataca.

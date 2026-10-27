@@ -21,4 +21,5 @@
 | 2026-10-27 | Fase 1 IA: técnica por ensayo con la física (CEM), objetivos calibrados con búsqueda grande, integración y coste | 3.5 |
 | 2026-10-27 | Pulido de técnica: zigzag con anticipación, planes "llegar y golpear" y "rodear y salir", tiro con postes | 2 |
 | 2026-10-27 | Fase 2 IA: pautas de decisión (primera, suelta rápido, ¿me da tiempo?, línea cerrada, ir a recibir, presión, apoyo corto), evaluación paralela | 3.5 |
-| | **Total** | **31.25** |
+| 2026-10-27 | Intención: pases al hueco, desmarques de ruptura, valor del avance, tiro probabilístico y remate de primeras | 2.5 |
+| | **Total** | **33.75** |

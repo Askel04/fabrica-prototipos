@@ -351,7 +351,8 @@ function kickObj(tx, ty, aimW = 3, minSpeed = 0, maxErr = 6, rush = 1) {
 
 // Tirar a puerta (portería en x = gx): lo que cuenta es que el balón entre (trayectoria prevista
 // con rebotes, lejos de los palos); el punto de mira (tx, ty) solo desempata.
-function shotObj(gx, tx, ty) {
+// tol: unidades de margen que se aceptan fuera de la zona limpia (con presión o tras esperar).
+function shotObj(gx, tx, ty, tol = 0) {
   let kt, inGoal, miss, err;
   return {
     reset() { kt = -1; },
@@ -363,13 +364,14 @@ function shotObj(gx, tx, ty) {
       const clear = C.GOAL_HALF - C.POST_RADIUS - C.BALL_RADIUS - 2;
       inGoal = end.goal === Math.sign(gx) && Math.abs(end.y) < clear;
       miss = inGoal ? 0 : end.goal ? Math.abs(end.y) - clear : 200;
+      if (!inGoal && miss <= tol) { inGoal = true; } // casi limpio: vale si hay prisa
       const a = Math.atan2(B.vy, B.vx) - Math.atan2(ty - B.y, tx - B.x);
       err = Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * (180 / Math.PI);
     },
     step() { return kt < 0; },
     result: () => ({ kt: kt >= 0 && inGoal ? kt : Infinity, err }),
     cost(P, B) {
-      if (kt >= 0) return inGoal ? kt + err * 0.5 : H + 150 + miss;
+      if (kt >= 0) return inGoal ? kt + err * 0.5 + miss * 3 : H + 150 + miss;
       const [ux, uy] = norm(tx - B.x, ty - B.y);
       const d = kickDirFor(B.vx, B.vy, ux, uy) || [ux, uy];
       const qx = B.x - d[0] * (CONTACT + 3), qy = B.y - d[1] * (CONTACT + 3);
@@ -591,15 +593,19 @@ export function makeMotor(others) {
         };
       }, replanFor(p, ball));
     },
-    shoot(p, ball, tx, ty) {
-      if (farApproach(p, ball)) return;
-      runPlan(p, `shot:${Math.sign(tx)}`, () => {
+    shoot(p, ball, tx, ty, tOpp = Infinity) {
+      if (farApproach(p, ball, 120, [tx, ty])) return;
+      const key = `shot:${Math.sign(tx)}`;
+      runPlan(p, key, () => {
+        const waited = p.motor?.key === key ? p.motorT - p.motor.since : 0;
+        const press = Math.max(0, Math.min(1, (45 - tOpp) / 35));
+        const tol = Math.min(16, waited / 4 + press * 12);
         const [ux, uy] = norm(tx - ball.x, ty - ball.y);
         const d = kickDirFor(ball.vx, ball.vy, ux, uy) || [ux, uy];
         const qx = ball.x - d[0] * (CONTACT + 4), qy = ball.y - d[1] * (CONTACT + 4);
         return {
           s: snapshot(p, ball, others()),
-          obj: shotObj(Math.sign(tx) * C.FIELD_W, tx, ty),
+          obj: shotObj(Math.sign(tx) * C.FIELD_W, tx, ty, tol),
           seeds: [towards(p, qx, qy, 6), towards(p, qx, qy, 15), towards(p, ball.x, ball.y, 0),
             ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty), ...arriveKickPlans(ball, tx, ty)],
           kick: true,

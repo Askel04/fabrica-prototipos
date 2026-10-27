@@ -4,15 +4,18 @@
 //    pase, tire o despeje
 //  - presión: % de recepciones rivales con un defensor a < 120 en las que alguno llega a < 60 del
 //    receptor en ≤ 0,5 s
+//  - intención: pases buenos hacia delante (avanzan ≥ 60), pases al hueco (intentos y acierto),
+//    tiros a puerta (golpeos que, según su trayectoria prevista, acaban dentro)
 //  - goles por partido
 // Uso: node tools/decisions.mjs [partidos=16] [minutos=3] [pesos JSON={}] [nivel=hard] [procesos=4]
 // Los pesos se aplican a los dos equipos (para comparar estilos de juego, no fuerza).
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Match } from '../src/sim/match.js';
+import { trajectory } from '../src/ai/evaluate.js';
 
 export function runGames(games, minutes, weights = {}, level = 'hard', size = 5) {
-  const out = { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0 };
+  const out = { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 };
   for (let g = 0; g < games; g++) {
     const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: { red: level, blue: level }, weights });
     let cur = null, pending = null, press = null;
@@ -20,7 +23,13 @@ export function runGames(games, minutes, weights = {}, level = 'hard', size = 5)
     m.touch = (p) => {
       const prev = m.lastTouch;
       if (prev !== p) {
-        if (pending && p !== pending) { if (p.team === pending.team) out.pasaBien++; else out.pasaMal++; pending = null; }
+        if (pending && p !== pending.p) {
+          const good = p.team === pending.p.team;
+          if (good) out.pasaBien++; else out.pasaMal++;
+          if (good && (m.ball.x - pending.x0) * pending.p.attack >= 60) out.adelanteBien++;
+          if (pending.kind === 'space' && good) out.huecoBien++;
+          pending = null;
+        }
         if (cur && cur !== p) { if (p.team !== cur.team) out.pierdeAntes++; cur = null; }
         if (prev && prev.team === p.team) {
           out.recepciones++;
@@ -34,9 +43,15 @@ export function runGames(games, minutes, weights = {}, level = 'hard', size = 5)
     };
     m.events.kick = (p) => {
       if (cur === p) {
-        if (p.act?.type === 'pass' || p.firstTime) pending = p; else out.tiroOdespeje++;
+        if (p.act?.type === 'pass' || (p.firstTime && !p.firstTime.shot)) {
+          pending = { p, x0: m.ball.x, kind: p.act?.kind };
+          if (p.act?.kind === 'space') out.huecoIntentos++;
+        } else out.tiroOdespeje++;
         cur = null;
       }
+      // tiro a puerta: cualquier golpeo cuya trayectoria prevista acaba dentro de la portería rival
+      const b = m.ball, path = trajectory(b.x, b.y, b.vx, b.vy, 150);
+      if (path[path.length - 1].goal === p.attack) out.tiros++;
     };
     for (let t = 0; t < 3600 * minutes; t++) {
       m.step();
@@ -63,6 +78,10 @@ export function summary(o) {
     recepMin: +(o.recepciones / Math.max(1, o.minutes) / 2).toFixed(1),
     golesPartido: +(o.goles / Math.max(1, o.games)).toFixed(2),
     presionATiempo: `${Math.round((o.presOk / Math.max(1, o.presOport)) * 100)}%`,
+    adelanteBuenosMin: +(o.adelanteBien / Math.max(1, o.minutes) / 2).toFixed(1),
+    huecoMin: +(o.huecoIntentos / Math.max(1, o.minutes) / 2).toFixed(1),
+    huecoOk: `${Math.round((o.huecoBien / Math.max(1, o.huecoIntentos)) * 100)}%`,
+    tirosPartido: +(o.tiros / Math.max(1, o.games)).toFixed(1),
   };
 }
 
@@ -79,7 +98,7 @@ export function runParallel(games, minutes, weights = {}, level = 'hard', procs 
   }))).then((parts) => parts.reduce((acc, o) => {
     for (const k of Object.keys(acc)) acc[k] += o[k];
     return acc;
-  }, { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0 }));
+  }, { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 }));
 }
 
 if (process.argv[2] === '--child') {

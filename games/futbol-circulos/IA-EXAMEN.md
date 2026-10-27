@@ -128,3 +128,28 @@ Lo aprendido:
 - **El equilibrio de estas pautas no se puede encontrar a mano con este ruido:** es el trabajo de la fase 3 (autojuego con muchas partidas).
 - **Niveles:** Difícil y Normal quedan muy igualados en 5v5 (4-3-5 en 12 partidos), porque las pautas se activan desde Normal. Separarlos es la fase 4.
 - **Coste:** ≈ 1,5 ms/tick de media en navegador de escritorio (el 5 % peor, 4,1 ms).
+
+## Fase 2b — intención: buscar la portería, pases al hueco y desmarques
+
+Lo que vio el usuario en el móvil: no tenían objetivo, solo no perder el balón; ni pase adelante, ni giro para buscar gol, ni desmarques.
+
+**Cambios:**
+- **Pase al hueco (`space`).** Para cada compañero se prueba un abanico de puntos en el espacio por delante de él (5 direcciones × 3 distancias). El pase vale si, siguiendo el recorrido del balón, él llega antes que cualquier rival.
+- **Busca la portería (`progress`).** El valor de cada destino de pase o conducción suma lo que adelanta el balón. Conservar sin presión solo puntúa si se avanza.
+- **Desmárcate (`runs`).** Con el balón controlado y sin presión, 1–2 de los de arriba (EI, ED, MC) atacan la espalda del último defensor rival durante ~2 s.
+- **Tiro.** La calidad del hueco era 0 en el 90 % de las situaciones: en el campo grande, cualquier rival "tocaba" algún punto de un tiro largo. Ahora el bloqueo es probabilístico y con tiempo de reacción.
+  - Bajo presión se aceptan tiros casi limpios.
+  - Hay **remate de primeras** (`firstShot`) cuando el balón llega en zona de tiro con hueco.
+  - Quien tiene el balón pegado no pierde su acción si cambia la rotación.
+
+| Por equipo (48 partidos, Difícil contra Difícil) | Fase 2 | Ahora |
+|---|---|---|
+| Tiros a puerta por partido (golpeos que acaban dentro según su trayectoria) | 3,3 | **8,1** |
+| Pases al hueco por minuto (acierto) | 0 | **3,5 (61 %)** |
+| Pases buenos hacia delante por minuto | 1,2 | 1,4 |
+| Pases que llegan | 73 % | 64 % (los pases al hueco arriesgan más) |
+| Pérdidas antes de soltar | 25 % | 26 % |
+
+**Mano a mano**, en el mismo partido (40 partidos, Difícil contra Difícil), con las pautas de intención activadas en un equipo y desactivadas en el otro: **96–30 en goles** a favor del que busca portería. El otro retiene más el balón y pierde menos, pero no hace daño.
+
+**Niveles 5v5:** Difícil contra Normal 9-0-3, Normal contra Fácil 10-0-2. Ya quedan bien separados.
