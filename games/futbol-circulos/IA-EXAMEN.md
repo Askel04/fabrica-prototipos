@@ -170,3 +170,41 @@ Petición del usuario: que sigan buscando el pase adelante, pero que no dejen de
 | Goles por partido | 2,0 | **2,5** |
 
 Mano a mano (40 partidos, un equipo con la pauta y el otro sin ella): 37–41 en goles, es decir, empate dentro del ruido. Juega mejor sin perder eficacia.
+
+## Fase 3 — entrenamiento por autojuego (primer intento)
+
+`node tools/league-train.mjs 16 16 2`:
+- sep-CMA-ES sobre 22 pesos de las pautas, con población de 8 más la media;
+- 16 partidos 5v5 de 2 min por candidato contra una liga congelada: la IA por defecto, una variante "solo conservar" y los últimos campeones;
+- misma semilla para todos los candidatos de cada generación;
+- puntuación = diferencia de goles + estilo relativo (pases, pases adelante, tiros, pérdidas, bulto), con castigo si el estilo empeora.
+
+Tardó 1 h 35 min en 4 núcleos.
+
+**Curva.** El mejor de cada generación osciló entre −0,05 y +0,72 sin tendencia, y la media de la distribución puntuó casi siempre por debajo de la IA por defecto. El ruido dominó.
+
+**Validación mano a mano** (80 partidos nuevos de 2 min contra la IA actual, alternando campo):
+
+| Candidato | G-E-P | Goles | Ganados de los decididos | Estilo frente a la actual |
+|---|---|---|---|---|
+| Mejor (generación 9) | 23-37-20 | 62-57 | 53 % | Peor: 4,5 frente a 5,5 pases/min, menos pases adelante, más pérdidas |
+| Media final | 21-39-20 | 45-54 | 51 % | Algo más combinativo, pero marca menos |
+
+**Decisión:** ninguno llega al criterio (≥ 60 % de los decididos sin empeorar el estilo). **Se mantienen los pesos actuales** (`weights.js` vacío).
+
+**Lo aprendido para el siguiente intento:**
+- **Señal muy pobre.** En partidos de 2 min la mitad acaban en empate (37–39 de 80) y casi todos con 0–2 goles, así que la diferencia de goles de 16 partidos apenas distingue entre candidatos.
+- **Para mejorar la señal:**
+  - una recompensa más densa: amenaza o xG de los tiros, avance del balón y recuperaciones en campo rival, en vez de solo goles;
+  - partidos más largos (4–5 min) o muchos más por candidato (≥ 48);
+  - reevaluar al líder de cada generación antes de aceptarlo.
+- **Los pesos actuales, puestos a mano con mediciones de 48 partidos, ya están cerca de un buen equilibrio:** ni el mejor ni la media los superan con claridad.
+- **Tendencias que coinciden en el mejor y en la media:**
+  - menos peso al pase genérico (`pass` 1 → 0,4–0,54);
+  - más paciencia antes de jugar de primeras (`firstTimeSlack` 22 → 34–35);
+  - más reciclaje atrás (`recycle` 0,3 → 0,42–0,56);
+  - menos premio al avance (`progress` 0,6 → 0,22–0,29);
+  - despejar menos (`clear` 0,4 → 0,1–0,25);
+  - más valor a desmarcarse hacia delante (`supAdv` 0,8 → 1,6–1,7).
+
+  Son pistas, no conclusiones: los dos candidatos solo empatan con la IA actual.

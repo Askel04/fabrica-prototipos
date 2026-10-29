@@ -23,4 +23,5 @@
 | 2026-10-27 | Fase 2 IA: pautas de decisión (primera, suelta rápido, ¿me da tiempo?, línea cerrada, ir a recibir, presión, apoyo corto), evaluación paralela | 3.5 |
 | 2026-10-27 | Intención: pases al hueco, desmarques de ruptura, valor del avance, tiro probabilístico y remate de primeras | 2.5 |
 | 2026-10-27 | Joystick fijo más alto; pase atrás para reciclar/cambiar de lado | 0.75 |
-| | **Total** | **34.5** |
+| 2026-10-29 | Fase 3: entrenador por autojuego (sep-CMA-ES, liga, semillas comunes), entrenamiento de 1,6 h y validación | 2.5 |
+| | **Total** | **37** |
