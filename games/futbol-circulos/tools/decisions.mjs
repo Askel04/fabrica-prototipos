@@ -6,63 +6,110 @@
 //    receptor en ≤ 0,5 s
 //  - intención: pases buenos hacia delante (avanzan ≥ 60), pases al hueco (intentos y acierto),
 //    tiros a puerta (golpeos que, según su trayectoria prevista, acaban dentro)
+//  - espaciado: % del tiempo con ≥ 3 compañeros a menos de 100 del balón
 //  - goles por partido
 // Uso: node tools/decisions.mjs [partidos=16] [minutos=3] [pesos JSON={}] [nivel=hard] [procesos=4]
 // Los pesos se aplican a los dos equipos (para comparar estilos de juego, no fuerza).
+// instrument(m) mide cada equipo por separado; lo usa también tools/league-train.mjs.
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Match } from '../src/sim/match.js';
 import { trajectory } from '../src/ai/evaluate.js';
+import { seeded } from '../src/drills/drills.js';
 
-export function runGames(games, minutes, weights = {}, level = 'hard', size = 5) {
-  const out = { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, atrasBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 };
-  for (let g = 0; g < games; g++) {
-    const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: { red: level, blue: level }, weights });
-    let cur = null, pending = null, press = null;
-    const touch = m.touch.bind(m);
-    m.touch = (p) => {
-      const prev = m.lastTouch;
-      if (prev !== p) {
-        if (pending && p !== pending.p) {
-          const good = p.team === pending.p.team;
-          if (good) out.pasaBien++; else out.pasaMal++;
-          if (good && (m.ball.x - pending.x0) * pending.p.attack >= 60) out.adelanteBien++;
-          if (good && (m.ball.x - pending.x0) * pending.p.attack <= -40) out.atrasBien++;
-          if (pending.kind === 'space' && good) out.huecoBien++;
-          pending = null;
-        }
-        if (cur && cur !== p) { if (p.team !== cur.team) out.pierdeAntes++; cur = null; }
-        if (prev && prev.team === p.team) {
-          out.recepciones++;
-          cur = p;
-          const near = Math.min(...m.players.filter((q) => q.team !== p.team).map((q) => Math.hypot(q.disc.x - p.disc.x, q.disc.y - p.disc.y)));
-          press = near < 120 ? { p, t: m.tick, ok: near < 60 } : null;
-          if (press) out.presOport++;
-        }
+const FIELDS = ['recepciones', 'pasaBien', 'pasaMal', 'pierdeAntes', 'tiroOdespeje', 'presOport', 'presOk',
+  'adelanteBien', 'atrasBien', 'huecoIntentos', 'huecoBien', 'tiros', 'bulto', 'muestras', 'goles'];
+const zero = () => Object.fromEntries(FIELDS.map((k) => [k, 0]));
+
+// Engancha las métricas a un partido. Devuelve { st: { red, blue }, after() }: after() se llama
+// tras cada m.step(). Las métricas de presión se apuntan al equipo que DEFIENDE.
+export function instrument(m) {
+  const st = { red: zero(), blue: zero() };
+  const other = (t) => (t === 'red' ? 'blue' : 'red');
+  let cur = null, pending = null, press = null;
+  const touch = m.touch.bind(m);
+  m.touch = (p) => {
+    const prev = m.lastTouch;
+    if (prev !== p) {
+      if (pending && p !== pending.p) {
+        const s = st[pending.p.team];
+        const good = p.team === pending.p.team;
+        if (good) s.pasaBien++; else s.pasaMal++;
+        const dx = (m.ball.x - pending.x0) * pending.p.attack;
+        if (good && dx >= 60) s.adelanteBien++;
+        if (good && dx <= -40) s.atrasBien++;
+        if (pending.kind === 'space' && good) s.huecoBien++;
+        pending = null;
       }
-      touch(p);
-    };
-    m.events.kick = (p) => {
-      if (cur === p) {
-        if (p.act?.type === 'pass' || (p.firstTime && !p.firstTime.shot)) {
-          pending = { p, x0: m.ball.x, kind: p.act?.kind };
-          if (p.act?.kind === 'space') out.huecoIntentos++;
-        } else out.tiroOdespeje++;
-        cur = null;
+      if (cur && cur !== p) { if (p.team !== cur.team) st[cur.team].pierdeAntes++; cur = null; }
+      if (prev && prev.team === p.team) {
+        st[p.team].recepciones++;
+        cur = p;
+        const near = Math.min(...m.players.filter((q) => q.team !== p.team).map((q) => Math.hypot(q.disc.x - p.disc.x, q.disc.y - p.disc.y)));
+        press = near < 120 ? { p, t: m.tick, ok: near < 60 } : null;
+        if (press) st[other(p.team)].presOport++;
       }
-      // tiro a puerta: cualquier golpeo cuya trayectoria prevista acaba dentro de la portería rival
-      const b = m.ball, path = trajectory(b.x, b.y, b.vx, b.vy, 150);
-      if (path[path.length - 1].goal === p.attack) out.tiros++;
-    };
+    }
+    touch(p);
+  };
+  m.events.kick = (p) => {
+    const s = st[p.team];
+    if (cur === p) {
+      if (p.act?.type === 'pass' || (p.firstTime && !p.firstTime.shot)) {
+        pending = { p, x0: m.ball.x, kind: p.act?.kind };
+        if (p.act?.kind === 'space') s.huecoIntentos++;
+      } else s.tiroOdespeje++;
+      cur = null;
+    }
+    // tiro a puerta: cualquier golpeo cuya trayectoria prevista acaba dentro de la portería rival
+    const b = m.ball, path = trajectory(b.x, b.y, b.vx, b.vy, 150);
+    if (path[path.length - 1].goal === p.attack) s.tiros++;
+  };
+  const after = () => {
+    if (press && !press.ok) {
+      if (m.tick - press.t > 30) press = null;
+      else if (m.players.some((q) => q.team !== press.p.team && Math.hypot(q.disc.x - press.p.disc.x, q.disc.y - press.p.disc.y) < 60)) press.ok = true;
+    }
+    if (press?.ok) { st[other(press.p.team)].presOk++; press = null; }
+    if (m.tick % 10 === 0 && m.state === 'play') {
+      for (const team of ['red', 'blue']) {
+        const n = m.players.filter((q) => q.team === team && Math.hypot(q.disc.x - m.ball.x, q.disc.y - m.ball.y) < 100).length;
+        st[team].muestras++;
+        if (n >= 3) st[team].bulto++;
+      }
+    }
+  };
+  return { st, after };
+}
+
+// Juega un partido 5v5 (o 3v3) con pesos por equipo y semilla opcional (mismo azar para todos los
+// que usen esa semilla: números aleatorios comunes). Devuelve las métricas por equipo.
+export function playGame({ minutes = 3, wRed = {}, wBlue = {}, level = 'hard', size = 5, seed = null }) {
+  const real = Math.random;
+  if (seed !== null) Math.random = seeded(seed);
+  try {
+    const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: { red: level, blue: level } });
+    m.brains.red.w = { ...m.brains.red.w, ...wRed };
+    m.brains.blue.w = { ...m.brains.blue.w, ...wBlue };
+    const { st, after } = instrument(m);
     for (let t = 0; t < 3600 * minutes; t++) {
       m.step();
-      if (press && !press.ok) {
-        if (m.tick - press.t > 30) press = null;
-        else if (m.players.some((q) => q.team !== press.p.team && Math.hypot(q.disc.x - press.p.disc.x, q.disc.y - press.p.disc.y) < 60)) press.ok = true;
-      }
-      if (press?.ok) { out.presOk++; press = null; }
+      after();
     }
-    out.goles += m.score.red + m.score.blue;
+    st.red.goles = m.score.red;
+    st.blue.goles = m.score.blue;
+    return st;
+  } finally {
+    Math.random = real;
+  }
+}
+
+// partidos con los mismos pesos en los dos equipos; suma de ambos equipos
+export function runGames(games, minutes, weights = {}, level = 'hard', size = 5) {
+  const out = { ...zero(), games: 0, minutes: 0 };
+  for (let g = 0; g < games; g++) {
+    const st = playGame({ minutes, wRed: weights, wBlue: weights, level, size });
+    for (const k of FIELDS) out[k] += st.red[k] + st.blue[k];
     out.games++;
     out.minutes += minutes;
   }
@@ -71,19 +118,22 @@ export function runGames(games, minutes, weights = {}, level = 'hard', size = 5)
 
 export function summary(o) {
   const passes = o.pasaBien + o.pasaMal;
+  const pct = (a, b) => `${Math.round((a / Math.max(1, b)) * 100)}%`;
+  const perTeamMin = (a) => +(a / Math.max(1, o.minutes) / 2).toFixed(1);
   return {
     partidos: o.games,
-    pasesOk: `${Math.round((o.pasaBien / Math.max(1, passes)) * 100)}%`,
-    pasesBuenosMin: +(o.pasaBien / Math.max(1, o.minutes) / 2).toFixed(1), // por equipo
-    pierdeAntes: `${Math.round((o.pierdeAntes / Math.max(1, o.recepciones)) * 100)}%`,
-    recepMin: +(o.recepciones / Math.max(1, o.minutes) / 2).toFixed(1),
+    pasesOk: pct(o.pasaBien, passes),
+    pasesBuenosMin: perTeamMin(o.pasaBien),
+    pierdeAntes: pct(o.pierdeAntes, o.recepciones),
+    recepMin: perTeamMin(o.recepciones),
     golesPartido: +(o.goles / Math.max(1, o.games)).toFixed(2),
-    presionATiempo: `${Math.round((o.presOk / Math.max(1, o.presOport)) * 100)}%`,
-    adelanteBuenosMin: +(o.adelanteBien / Math.max(1, o.minutes) / 2).toFixed(1),
-    atrasBuenosMin: +(o.atrasBien / Math.max(1, o.minutes) / 2).toFixed(1),
-    huecoMin: +(o.huecoIntentos / Math.max(1, o.minutes) / 2).toFixed(1),
-    huecoOk: `${Math.round((o.huecoBien / Math.max(1, o.huecoIntentos)) * 100)}%`,
+    presionATiempo: pct(o.presOk, o.presOport),
+    adelanteBuenosMin: perTeamMin(o.adelanteBien),
+    atrasBuenosMin: perTeamMin(o.atrasBien),
+    huecoMin: perTeamMin(o.huecoIntentos),
+    huecoOk: pct(o.huecoBien, o.huecoIntentos),
     tirosPartido: +(o.tiros / Math.max(1, o.games)).toFixed(1),
+    bulto: `${((o.bulto / Math.max(1, o.muestras)) * 100).toFixed(1)}%`,
   };
 }
 
@@ -92,7 +142,7 @@ export function runParallel(games, minutes, weights = {}, level = 'hard', procs 
   const file = fileURLToPath(import.meta.url);
   const per = Array.from({ length: procs }, (_, i) => Math.floor(games / procs) + (i < games % procs ? 1 : 0)).filter((n) => n > 0);
   return Promise.all(per.map((n) => new Promise((resolve, reject) => {
-    const ch = spawn(process.execPath, [file, '--child', String(n), String(minutes), JSON.stringify(weights), level]);
+    const ch = spawn(process.execPath, [file, '--decisions-child', String(n), String(minutes), JSON.stringify(weights), level]);
     let buf = '';
     ch.stdout.on('data', (d) => { buf += d; });
     ch.stderr.on('data', (d) => process.stderr.write(d));
@@ -100,10 +150,10 @@ export function runParallel(games, minutes, weights = {}, level = 'hard', procs 
   }))).then((parts) => parts.reduce((acc, o) => {
     for (const k of Object.keys(acc)) acc[k] += o[k];
     return acc;
-  }, { games: 0, minutes: 0, recepciones: 0, pasaBien: 0, pasaMal: 0, pierdeAntes: 0, tiroOdespeje: 0, goles: 0, presOport: 0, presOk: 0, adelanteBien: 0, atrasBien: 0, huecoIntentos: 0, huecoBien: 0, tiros: 0 }));
+  }, { ...zero(), games: 0, minutes: 0 }));
 }
 
-if (process.argv[2] === '--child') {
+if (process.argv[2] === '--decisions-child') {
   const [, , , n, minutes, w, level] = process.argv;
   process.stdout.write(JSON.stringify(runGames(+n, +minutes, JSON.parse(w), level)));
 } else if (import.meta.url === `file://${process.argv[1]}`) {
