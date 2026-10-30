@@ -24,4 +24,5 @@
 | 2026-10-27 | Intención: pases al hueco, desmarques de ruptura, valor del avance, tiro probabilístico y remate de primeras | 2.5 |
 | 2026-10-27 | Joystick fijo más alto; pase atrás para reciclar/cambiar de lado | 0.75 |
 | 2026-10-29 | Fase 3: entrenador por autojuego (sep-CMA-ES, liga, semillas comunes), entrenamiento de 1,6 h y validación | 2.5 |
-| | **Total** | **37** |
+| 2026-10-30 | Fase 3, 2.º intento (recompensa densa, reevaluación, validación de 4 candidatos); fase 4: técnica por nivel, escalera calibrada l1–l6, examen por nivel | 2.5 |
+| | **Total** | **39.5** |

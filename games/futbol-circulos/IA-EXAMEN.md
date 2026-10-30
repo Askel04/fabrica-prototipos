@@ -247,3 +247,48 @@ Tardó 1 h 35 min en 4 núcleos.
 
 Pesos de la media final (estilo "directo"), por si se usan como rival del modo carrera:
 `{"pass":0.586,"dribble":0.332,"clear":0.502,"align":1.605,"quick":0.431,"firstTimeSlack":23.0,"execMargin":5.52,"progress":1.2,"recycle":0,"switchPlay":0.098,"supAdv":0.579,"supDist":1.429}`
+
+## Fase 4 — niveles de dificultad desde el experto
+
+**Qué se degrada con θ** (`src/ai/params.js`):
+- **Técnica** (`src/ai/motor.js`, nuevo en esta fase): fracción de ensayos del planificador (`motorBudget` 0,3 → 1), ticks de más entre replanificaciones (`replanExtra` 4 → 0) y error de dirección del mando en cada tick (`jitterDeg` 16° → 0).
+- **Golpeo:** el error de puntería del nivel se aplica ahora también al pase y al remate de primeras.
+- **Decisiones:** la tabla que ya existía (reacción, ruido de percepción, temperatura, márgenes…) y las pautas por umbral.
+- **Umbrales escalonados.** Antes cuatro pautas se activaban a la vez en θ 0,4 y la escalera daba un salto ahí (θ 0,377 perdía el 83 % contra 0,402). Ahora:
+  - ¿me da tiempo? 0,12;
+  - pase al hueco 0,2;
+  - disparadores de presión 0,25;
+  - pase de primeras 0,38.
+
+**Calibrado** (`node tools/levels.mjs calibrate`): de arriba abajo, búsqueda binaria del θ de cada nivel para que el de encima gane ~70 % de los decididos (40 partidos de 3 min por prueba).
+
+**Escalera resultante** (`CONFIG.AI_LEVELS`, comprobada con `node tools/levels.mjs table 48 3`):
+
+| Duelo | G-E-P (del de arriba) | Decididos | Goles |
+|---|---|---|---|
+| l2 (θ 0,4) – l1 (θ 0,19) | 31-8-9 | 78 % | 2,42-1,02 |
+| l3 (θ 0,495) – l2 | 29-11-8 | 78 % | 1,79-0,73 |
+| l4 (θ 0,66) – l3 | 25-17-6 | 81 % | 1,75-0,96 |
+| l5 (θ 0,813) – l4 | 21-11-16 | 57 % | 1,35-1,23 |
+| l6 (θ 1) – l5 | 20-18-10 | 67 % | 1,15-0,81 |
+| l3 – l1 | 44-3-1 | 98 % | 3,44-0,58 |
+| l5 – l3 | 33-12-3 | 92 % | 1,67-0,58 |
+
+Elo (l1 = 0): l2 215 · l3 439 · l4 686 · l5 734 · l6 854. La escalera está ordenada en todos los saltos. El ruido con 48 partidos es de ±7 puntos, así que l5–l4 (57 %) es el salto más corto y l4–l3 el más largo.
+
+**Menú:** Fácil = l1, Normal = l3, Difícil = l6, compañeros = l5. Se parece a lo de antes (0,05 / 0,4 / 1) para no endurecer Fácil de golpe. El plan decía l2/l4/l6; cambiarlo es una línea de `src/config.js`.
+
+**Técnica por nivel** (`node tools/drills.mjs motor-lN 100`, % de acierto):
+
+| Nivel | Recepción | Control + pase (llega) | Primera con presión | Conducción | Giro | 1 contra 1 | Tiro |
+|---|---|---|---|---|---|---|---|
+| l1 | 100 | 46 (66) | 59 | 39 | 26 | 15 | 81 |
+| l2 | 100 | 71 (90) | 77 | 48 | 30 | 27 | 79 |
+| l3 | 100 | 75 (90) | 84 | 71 | 35 | 54 | 86 |
+| l4 | 100 | 78 (94) | 84 | 90 | 66 | 70 | 89 |
+| l5 | 100 | 85 (99) | 89 | 90 | 77 | 66 | 92 |
+| l6 | 100 | 87 (97) | 90 | 100 | 94 | 75 | 89 |
+
+Incluso l1 controla todos los balones y llegan dos de cada tres pases: juega peor, no torpe. Lo que más se degrada es conducir, girarse y superar al defensor.
+
+**Rendimiento en el navegador** (5v5, 20 s): Fácil 59,6 FPS, Normal 59,9, Difícil 58,5. Tick medio de 0,74 a 1,06 ms. 0 errores. Online local sin errores.
