@@ -56,15 +56,16 @@ export function levelParams(theta) {
   P.passAim = (P.passDeg * Math.PI) / 180;
   P.align = (P.alignDeg * Math.PI) / 180;
   P.motorSkill = { budget: P.motorBudget, replanExtra: Math.round(P.replanExtra), jitter: (P.jitterDeg * Math.PI) / 180 };
-  // inteligencia en ataque: jugadas que conoce
-  P.through = theta >= 0.4; // pase al espacio
+  // inteligencia en ataque: jugadas que conoce. Los umbrales están escalonados (fase 4): si varias
+  // pautas se activan en el mismo θ, la escalera de niveles da un salto en ese punto.
+  P.through = theta >= 0.2; // pase al espacio
   P.oneTwo = theta >= 0.5; // pared
   P.wallPass = theta >= 0.8; // pase a la banda
   P.drop = theta >= 0.8; // dejada atrás al último hombre
   P.fakes = theta >= 0.8; // amagos
-  P.oneTouch = theta >= 0.4; // pase de primeras cuando le van a presionar al recibir
-  P.pressTriggers = theta >= 0.4; // salta a presionar con los disparadores (si no, espera a distancia)
-  P.execCheck = theta >= 0.4; // antes de elegir, comprueba si le da tiempo a ejecutar el golpeo
+  P.oneTouch = theta >= 0.38; // pase de primeras cuando le van a presionar al recibir
+  P.pressTriggers = theta >= 0.25; // salta a presionar con los disparadores (si no, espera a distancia)
+  P.execCheck = theta >= 0.12; // antes de elegir, comprueba si le da tiempo a ejecutar el golpeo
   // rotación (sin portero): el que actúa vuelve atrás; los demás suben un puesto
   P.rotateBack = theta >= 0.3;
   P.farPost = theta >= 0.6; // vuelve por el lado alejado de la jugada

@@ -5,6 +5,7 @@
 //   node tools/levels.mjs calibrate [partidos=40] [minutos=3] → busca, de arriba abajo, el θ de cada
 //                                                               nivel para que el de encima gane
 //                                                               ~70 % de los partidos decididos
+//                                                               (FROM='{"l4":0.66}': solo por debajo)
 // Los partidos se reparten entre procesos hijos (uno por núcleo) con semillas fijas.
 import { spawn } from 'node:child_process';
 import { availableParallelism } from 'node:os';
@@ -47,8 +48,10 @@ async function main() {
   const t0 = Date.now();
   if (mode === 'calibrate') {
     // de arriba abajo: l6 = experto (θ = 1); cada nivel, el θ con el que el de encima gana ~70 %
-    const th = { l6: 1 };
-    for (let i = LEVELS.length - 2; i >= 0; i--) {
+    // FROM='{"l4":0.66}': rehacer solo los niveles por debajo de uno ya calibrado
+    const th = JSON.parse(process.env.FROM || '{"l6":1}');
+    const top = LEVELS.indexOf(Object.keys(th)[0]);
+    for (let i = top - 1; i >= 0; i--) {
       const up = th[LEVELS[i + 1]];
       let lo = 0, hi = up, best = null;
       for (let it = 0; it < 4; it++) {
