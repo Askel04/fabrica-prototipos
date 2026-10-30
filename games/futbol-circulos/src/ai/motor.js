@@ -459,20 +459,30 @@ function dribbleObj(tx, ty, def = null, next = null) {
 // ---------------- habilidades (lo que llaman la IA y los ejercicios) ----------------
 // Estado de plan por jugador: { key, plan, tick }. El reloj (p.motorT) avanza una vez por llamada
 // (las habilidades se llaman una vez por tick); un plan de otra habilidad u objetivo se descarta.
-function runPlan(p, key, build, replan = REPLAN) {
+// sk: técnica del nivel (src/ai/params.js): budget (fracción de ensayos), replanExtra (ticks de más
+// entre replanificaciones) y jitter (σ en radianes del error de mando en cada tick).
+const FULL = { pop: 18, iters: 2, elite: 5 };
+function scaleBudget(b, f) {
+  if (f >= 1) return b;
+  const x = b || FULL;
+  return { pop: Math.max(4, Math.round(x.pop * f)), iters: f < 0.6 ? 1 : x.iters, elite: Math.max(2, Math.round(x.elite * f)) };
+}
+
+function runPlan(p, key, build, replan = REPLAN, sk = null) {
   p.motorT = (p.motorT || 0) + 1;
   const st = p.motor;
-  if (st && st.key === key && p.motorT - st.tick < replan && st.plan) return apply(p, st, p.motorT);
+  replan += sk?.replanExtra || 0;
+  if (st && st.key === key && p.motorT - st.tick < replan && st.plan) return apply(p, st, p.motorT, sk);
   const over = spent >= TICK_BUDGET;
-  if (over && st && st.key === key && st.plan && p.motorT - st.tick < replan + 4) return apply(p, st, p.motorT);
+  if (over && st && st.key === key && st.plan && p.motorT - st.tick < replan + 4) return apply(p, st, p.motorT, sk);
   const { s, obj, seeds, kick, h = H, budget: b = null } = build();
-  const budget = over ? { pop: 6, iters: 1, elite: 3 } : b;
+  const budget = over ? { pop: 6, iters: 1, elite: 3 } : scaleBudget(b, sk?.budget ?? 1);
   // plan anterior desplazado (sigue siendo buena semilla si el objetivo no ha cambiado)
   if (st && st.key === key && st.plan && !st.plan.policy) seeds.push(shift(st.plan, p.motorT - st.tick));
   const { plan } = optimize(s, obj, seeds, { kick, h, ...(budget || {}) });
   const since = st && st.key === key ? st.since : p.motorT;
   p.motor = { key, plan, tick: p.motorT, h, since, ball: s.ball };
-  return apply(p, p.motor, p.motorT);
+  return apply(p, p.motor, p.motorT, sk);
 }
 
 function shift(plan, dt) {
@@ -481,18 +491,21 @@ function shift(plan, dt) {
   return pl;
 }
 
-function apply(p, st, tick) {
+function apply(p, st, tick, sk = null) {
   const t = tick - st.tick;
   if (st.plan.policy) {
     // plan-controlador: se evalúa con el estado real (mismo código que en el ensayo)
-    const kick = st.plan.policy(t, p.disc, st.ball, inp);
-    p.input.x = inp[0]; p.input.y = inp[1]; p.input.kick = kick;
-    return;
+    p.input.kick = st.plan.policy(t, p.disc, st.ball, inp);
+  } else {
+    planInput(st.plan, t, inp, st.h);
+    p.input.kick = t >= st.plan[DIM - 1];
   }
-  planInput(st.plan, t, inp, st.h);
-  p.input.x = inp[0];
-  p.input.y = inp[1];
-  p.input.kick = t >= st.plan[DIM - 1];
+  // mando impreciso de los niveles bajos: la dirección se desvía un poco cada tick (lo ensayado
+  // no es exactamente lo que hace, así que controla, conduce y golpea peor)
+  const j = sk?.jitter ? gaussian() * sk.jitter : 0;
+  const c = Math.cos(j), sn = Math.sin(j);
+  p.input.x = inp[0] * c - inp[1] * sn;
+  p.input.y = inp[0] * sn + inp[1] * c;
 }
 
 // ¿El balón llega a esta zona dentro del horizonte? Si no, ir al punto de intercepción sin ensayar.
@@ -547,7 +560,8 @@ export function estimateKick(p, ball, others, tx, ty, shot = false) {
 }
 
 // others(): jugadores que hay en el campo (para meterlos en el ensayo si están cerca)
-export function makeMotor(others) {
+// skill(): técnica del nivel actual ({ budget, replanExtra, jitter }); por defecto, la máxima
+export function makeMotor(others, skill = () => null) {
   // sin rivales cerca del balón no hace falta replanificar tan a menudo
   const replanFor = (p, ball) => {
     for (const o of others()) {
@@ -564,7 +578,7 @@ export function makeMotor(others) {
         seeds: [towards(p, ball.x, ball.y), towards(p, ball.x + ball.vx * 10, ball.y + ball.vy * 10, NO_KICK, 0.5), new Float64Array(DIM).fill(0).map((v, i) => (i === DIM - 1 ? NO_KICK : 0))],
         kick: false,
         budget: { pop: 12, iters: 2, elite: 4 },
-      }), replanFor(p, ball));
+      }), replanFor(p, ball), skill());
     },
     // tOpp: ticks que tardaría el rival más cercano en llegar al balón (presión): con un rival
     // encima se suelta antes y con más margen de error, como haría un jugador.
@@ -591,7 +605,7 @@ export function makeMotor(others) {
             ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty), ...arriveKickPlans(ball, tx, ty)],
           kick: true,
         };
-      }, replanFor(p, ball));
+      }, replanFor(p, ball), skill());
     },
     shoot(p, ball, tx, ty, tOpp = Infinity) {
       if (farApproach(p, ball, 120, [tx, ty])) return;
@@ -610,7 +624,7 @@ export function makeMotor(others) {
             ...aroundSeeds(p, ball, d[0], d[1], [14, 26]), ...timedKickSeeds(p, ball, tx, ty), ...arriveKickPlans(ball, tx, ty)],
           kick: true,
         };
-      });
+      }, REPLAN, skill());
     },
     dribble(p, ball, tx, ty, def = null, next = null) {
       if (edgeToBall(p, ball) > 40 && farApproach(p, ball)) return;
@@ -629,7 +643,7 @@ export function makeMotor(others) {
             ...aroundSeeds(p, ball, ux, uy, [NO_KICK]), ...(turning ? orbitPlans(tx, ty) : [])],
           kick: false,
         };
-      }, turning ? 1 : replanFor(p, ball));
+      }, turning ? 1 : replanFor(p, ball), skill());
     },
   };
 }

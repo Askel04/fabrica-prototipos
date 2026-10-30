@@ -60,9 +60,17 @@ export const CONFIG = {
   AI_ARRIVE: 30, // distancia a la que la IA empieza a frenar al llegar a un punto
   // Dificultad = un único θ ∈ [0, 1] que interpola todos los diales (src/ai/params.js).
   // La dificultad del menú cambia a los rivales; tus compañeros usan siempre el perfil 'mate'.
+  // Escalera de niveles (fase 4; tools/levels.mjs): cada uno gana ~70 % de los partidos decididos
+  // al de debajo. l1 → divisiones bajas del modo carrera, l6 = experto. Menú: Fácil/Normal/Difícil.
   AI_LEVELS: {
-    easy: { theta: 0.05 },
-    normal: { theta: 0.4 },
+    l1: { theta: 0.05 },
+    l2: { theta: 0.2 },
+    l3: { theta: 0.4 },
+    l4: { theta: 0.6 },
+    l5: { theta: 0.8 },
+    l6: { theta: 1 },
+    easy: { theta: 0.2 },
+    normal: { theta: 0.6 },
     hard: { theta: 1 },
     mate: { theta: 0.8 },
   },

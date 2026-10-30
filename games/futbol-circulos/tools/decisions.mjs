@@ -91,11 +91,11 @@ export function instrument(m) {
 
 // Juega un partido 5v5 (o 3v3) con pesos por equipo y semilla opcional (mismo azar para todos los
 // que usen esa semilla: números aleatorios comunes). Devuelve las métricas por equipo.
-export function playGame({ minutes = 3, wRed = {}, wBlue = {}, level = 'hard', size = 5, seed = null }) {
+export function playGame({ minutes = 3, wRed = {}, wBlue = {}, level = 'hard', levels = null, size = 5, seed = null }) {
   const real = Math.random;
   if (seed !== null) Math.random = seeded(seed);
   try {
-    const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: { red: level, blue: level } });
+    const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: levels || { red: level, blue: level } });
     m.brains.red.w = { ...m.brains.red.w, ...wRed };
     m.brains.blue.w = { ...m.brains.blue.w, ...wBlue };
     const { st, after } = instrument(m);

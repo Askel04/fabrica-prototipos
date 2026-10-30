@@ -71,6 +71,12 @@ const TRAITS = [
   { name: 'equilibrado', shot: 1, pass: 1, dribble: 1 },
 ];
 
+// (tx, ty) girado ang radianes alrededor de (cx, cy): error de ejecución de un golpeo
+function turn(cx, cy, tx, ty, ang) {
+  const c = Math.cos(ang), sn = Math.sin(ang), dx = tx - cx, dy = ty - cy;
+  return [cx + dx * c - dy * sn, cy + dx * sn + dy * c];
+}
+
 export class TeamBrain {
   constructor(match, team, weights) {
     this.m = match;
@@ -79,7 +85,7 @@ export class TeamBrain {
     this.opps = match.players.filter((p) => p.team !== team);
     this.attack = this.players[0].attack;
     // técnica (controlar, pasar, tirar, conducir) por ensayo con la física: src/ai/motor.js
-    this.motor = makeMotor(() => match.players);
+    this.motor = makeMotor(() => match.players, () => this.P?.motorSkill);
     this.w = { ...DEFAULT_WEIGHTS, ...TRAINED, ...(weights || {}) };
     this.noise = { x: 0, y: 0, vx: 0, vy: 0 };
     this.adapt = { sectors: [0, 0, 0], long: 0, short: 0, biasY: 0, holdBonus: 0 };
@@ -549,8 +555,9 @@ export class TeamBrain {
     // remate de primeras: balón que llega en zona de tiro con hueco
     const sh = bestShot({ x: it.x, y: it.y }, opps, a);
     if (sh.dist < 300 * fieldScale() && sh.quality > w.firstShot) {
-      p.firstTime = { tx: sh.x, ty: sh.y, tick: m.tick, shot: true };
-      this.motor.shoot(p, ball, sh.x, sh.y, Math.max(0, slack));
+      const [tx, ty] = turn(it.x, it.y, sh.x, sh.y, gauss(P.aim));
+      p.firstTime = { tx, ty, tick: m.tick, shot: true };
+      this.motor.shoot(p, ball, tx, ty, Math.max(0, slack));
       return true;
     }
     if (slack > w.firstTimeSlack) return false; // hay tiempo para controlar
@@ -568,8 +575,10 @@ export class TeamBrain {
       if (!best || u > best.u) best = { u, tx, ty, p: ps.p, to: mt };
     }
     if (!best || best.p < w.firstTime) return false;
-    p.firstTime = { tx: best.tx, ty: best.ty, tick: m.tick, to: best.to };
-    this.motor.pass(p, ball, best.tx, best.ty, 3, null, Math.max(0, slack));
+    // error de ejecución del nivel, como en los pases tras controlar
+    const [tx, ty] = turn(it.x, it.y, best.tx, best.ty, gauss(P.passAim));
+    p.firstTime = { tx, ty, tick: m.tick, to: best.to };
+    this.motor.pass(p, ball, tx, ty, 3, null, Math.max(0, slack));
     return true;
   }
 

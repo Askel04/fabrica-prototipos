@@ -6,6 +6,7 @@ import { trajectory, intercept } from '../ai/evaluate.js';
 import { levelParams } from '../ai/params.js';
 import { makeMotor } from '../ai/motor.js';
 import { DEF_DELAY } from './drills.js';
+import { CONFIG as C } from '../config.js';
 
 const P = levelParams(1);
 
@@ -53,14 +54,26 @@ export const legacy = {
 
 // 'motor': planificador por ensayo con la física (src/ai/motor.js). Es una fábrica: necesita saber
 // quién más hay en el campo (run.actors) para meterlo en sus ensayos.
-export function motorSkills(onField) {
-  const mot = makeMotor(onField);
+// Con lv (nombre de CONFIG.AI_LEVELS): técnica de ese nivel, como en el partido (motor degradado y
+// error de golpeo: el objetivo gira un ángulo aleatorio, fijo mientras dure el mismo objetivo).
+export function motorSkills(onField, lv = null) {
+  const LP = lv ? levelParams(C.AI_LEVELS[lv].theta) : null;
+  const mot = makeMotor(onField, () => LP?.motorSkill);
+  const aimed = new Map();
+  const aim = (p, ball, tx, ty, sigma) => {
+    if (!LP) return [tx, ty];
+    const k = `${tx},${ty}`;
+    let e = aimed.get(p);
+    if (!e || e.k !== k) aimed.set(p, (e = { k, a: gauss(sigma) }));
+    const c = Math.cos(e.a), sn = Math.sin(e.a), dx = tx - ball.x, dy = ty - ball.y;
+    return [ball.x + dx * c - dy * sn, ball.y + dx * sn + dy * c];
+  };
   return {
-    name: 'motor',
+    name: lv ? `motor-${lv}` : 'motor',
     control: (p, ball) => mot.control(p, ball),
-    pass: (p, ball, tx, ty) => mot.pass(p, ball, tx, ty),
+    pass: (p, ball, tx, ty) => mot.pass(p, ball, ...aim(p, ball, tx, ty, LP?.passAim)),
     dribble: (p, ball, tx, ty, next) => mot.dribble(p, ball, tx, ty, null, next),
-    shoot: (p, ball, tx, ty) => mot.shoot(p, ball, tx, ty),
+    shoot: (p, ball, tx, ty) => mot.shoot(p, ball, ...aim(p, ball, tx, ty, LP?.aim)),
     beat: (p, ball, d, gx, gy) => mot.dribble(p, ball, gx, gy, { p: d, gx, gy, delay: DEF_DELAY }),
   };
 }
@@ -68,4 +81,7 @@ export function motorSkills(onField) {
 export const SKILLSETS = {
   actual: legacy,
   motor: (run) => motorSkills(() => run.actors.filter((a) => Math.abs(a.disc.y) < 400)),
+  // técnica por nivel (fase 4): motor-l1 … motor-l6
+  ...Object.fromEntries(['l1', 'l2', 'l3', 'l4', 'l5', 'l6'].map((lv) => [`motor-${lv}`,
+    (run) => motorSkills(() => run.actors.filter((a) => Math.abs(a.disc.y) < 400), lv)])),
 };

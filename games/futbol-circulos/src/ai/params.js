@@ -23,6 +23,10 @@ const TABLE = {
   sweepMarginS: [0.4, 0.3, 0.2, 0.17, 0.15], // ventaja que necesita para salir
   rotHystTicks: [24, 18, 12, 8, 6], // histéresis del orden de rotación
   pressSpeed: [0.75, 0.85, 1, 1, 1], // intensidad de la presión (input, no velocidad máxima)
+  // técnica (src/ai/motor.js): cuánto ensaya, cada cuánto corrige y lo fino que es su mando
+  motorBudget: [0.3, 0.45, 0.65, 0.85, 1], // fracción de los ensayos del planificador
+  replanExtra: [4, 3, 2, 1, 0], // ticks de más entre replanificaciones
+  jitterDeg: [16, 10, 6, 3, 0], // error de dirección del mando en cada tick (σ)
 };
 
 function lerpTable(row, t) {
@@ -51,6 +55,7 @@ export function levelParams(theta) {
   P.aim = (P.aimDeg * Math.PI) / 180;
   P.passAim = (P.passDeg * Math.PI) / 180;
   P.align = (P.alignDeg * Math.PI) / 180;
+  P.motorSkill = { budget: P.motorBudget, replanExtra: Math.round(P.replanExtra), jitter: (P.jitterDeg * Math.PI) / 180 };
   // inteligencia en ataque: jugadas que conoce
   P.through = theta >= 0.4; // pase al espacio
   P.oneTwo = theta >= 0.5; // pared
