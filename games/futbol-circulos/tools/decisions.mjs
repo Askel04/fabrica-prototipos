@@ -7,6 +7,8 @@
 //  - intención: pases buenos hacia delante (avanzan ≥ 60), pases al hueco (intentos y acierto),
 //    tiros a puerta (golpeos que, según su trayectoria prevista, acaban dentro)
 //  - espaciado: % del tiempo con ≥ 3 compañeros a menos de 100 del balón
+//  - dominio: ticks de posesión peligrosa (último toque propio y balón en el último tercio rival) y
+//    recuperaciones en campo rival (señales más densas que los goles para el autojuego)
 //  - goles por partido
 // Uso: node tools/decisions.mjs [partidos=16] [minutos=3] [pesos JSON={}] [nivel=hard] [procesos=4]
 // Los pesos se aplican a los dos equipos (para comparar estilos de juego, no fuerza).
@@ -16,9 +18,11 @@ import { fileURLToPath } from 'node:url';
 import { Match } from '../src/sim/match.js';
 import { trajectory } from '../src/ai/evaluate.js';
 import { seeded } from '../src/drills/drills.js';
+import { CONFIG as C } from '../src/config.js';
 
 const FIELDS = ['recepciones', 'pasaBien', 'pasaMal', 'pierdeAntes', 'tiroOdespeje', 'presOport', 'presOk',
-  'adelanteBien', 'atrasBien', 'huecoIntentos', 'huecoBien', 'tiros', 'bulto', 'muestras', 'goles'];
+  'adelanteBien', 'atrasBien', 'huecoIntentos', 'huecoBien', 'tiros', 'bulto', 'muestras', 'goles',
+  'peligro', 'recupRival'];
 const zero = () => Object.fromEntries(FIELDS.map((k) => [k, 0]));
 
 // Engancha las métricas a un partido. Devuelve { st: { red, blue }, after() }: after() se llama
@@ -42,6 +46,7 @@ export function instrument(m) {
         pending = null;
       }
       if (cur && cur !== p) { if (p.team !== cur.team) st[cur.team].pierdeAntes++; cur = null; }
+      if (prev && prev.team !== p.team && m.ball.x * p.attack > 0) st[p.team].recupRival++;
       if (prev && prev.team === p.team) {
         st[p.team].recepciones++;
         cur = p;
@@ -71,6 +76,8 @@ export function instrument(m) {
       else if (m.players.some((q) => q.team !== press.p.team && Math.hypot(q.disc.x - press.p.disc.x, q.disc.y - press.p.disc.y) < 60)) press.ok = true;
     }
     if (press?.ok) { st[other(press.p.team)].presOk++; press = null; }
+    const lt = m.lastTouch;
+    if (lt && m.state === 'play' && m.ball.x * lt.attack > C.FIELD_W / 3) st[lt.team].peligro++;
     if (m.tick % 10 === 0 && m.state === 'play') {
       for (const team of ['red', 'blue']) {
         const n = m.players.filter((q) => q.team === team && Math.hypot(q.disc.x - m.ball.x, q.disc.y - m.ball.y) < 100).length;
