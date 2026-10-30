@@ -208,3 +208,42 @@ Tardó 1 h 35 min en 4 núcleos.
   - más valor a desmarcarse hacia delante (`supAdv` 0,8 → 1,6–1,7).
 
   Son pistas, no conclusiones: los dos candidatos solo empatan con la IA actual.
+
+## Fase 3 — segundo intento de autojuego
+
+**Cambios respecto al primero** (`tools/league-train.mjs`, `tools/decisions.mjs`):
+- **Recompensa densa.** Además de la diferencia de goles, cuenta (siempre como diferencia contra el rival):
+  - 0,3 × tiros a puerta por partido;
+  - 0,1 × posesión peligrosa (segundos con el último toque propio y el balón en el último tercio rival, ÷ 10);
+  - 0,1 × recuperaciones en campo rival.
+- **Menos ruido:** partidos de 3 min, 24 por candidato, solo 12 pesos (`pass`, `dribble`, `clear`, `align`, `quick`, `firstTimeSlack`, `execMargin`, `progress`, `recycle`, `switchPlay`, `supAdv`, `supDist`), población 6 + la media.
+- **Reevaluación:** los 2 mejores de cada generación juegan 24 partidos más con semillas nuevas antes de poder ser campeón.
+- El mejor se guarda aparte (`tools/.league-best.json`); solo pasa al juego si supera la validación.
+
+12 generaciones, 2 h 40 min en 4 núcleos.
+
+**Curva.** Esta vez la señal sí separa: la media de la distribución ganó a la liga en 11 de 12 generaciones (puntuación de −0,2 a +6,6) y el líder reevaluado osciló entre +3,8 y +7,1, con +0,2 a +0,9 goles por partido.
+
+**Validación** (120 partidos nuevos de 3 min contra la IA actual, alternando campo). Criterio: ≥ 58 % de los decididos, pases buenos ≥ −5 %, pérdidas ≤ +5 %, bulto ≤ +20 %.
+
+| Candidato | G-E-P | Goles | Decididos | Pases buenos/min | Tiros/partido | Pérdidas | Bulto |
+|---|---|---|---|---|---|---|---|
+| Mejor (gen. 3) | 56-29-35 | 148-101 | 62 % ✓ | 4,61 vs 5,37 (−14 %) ✗ | 5,3 vs 3,5 | 24,8 vs 24,3 % ✓ | 3,1 vs 3,7 % ✓ |
+| Media final | 63-35-22 | 163-90 | **74 %** ✓ | 3,97 vs 5,44 (−27 %) ✗ | 6,0 vs 3,2 | 24,5 vs 24,2 % ✓ | 2,6 vs 4,1 % ✓ |
+| Media con `pass` = 1 | 55-31-34 | 173-122 | 62 % ✓ | 4,41 vs 5,55 (−21 %) ✗ | 5,4 vs 3,7 | 26 vs 23,9 % ✓ | ✓ |
+| Media con `pass`, `align` y `progress` actuales | 45-33-42 | 140-125 | 52 % ✗ | 4,72 vs 5,08 (−7 %) ✗ | 5,2 vs 4,5 | ✓ | ✓ |
+
+**Decisión:** ninguno cumple el criterio completo. **Se mantienen los pesos actuales** (`weights.js` vacío).
+
+**Lo aprendido:**
+- **El autojuego encontró algo real:** jugar más directo gana. La media final gana el 74 % de los decididos, con casi el doble de tiros. Los cambios que más pesan:
+  - más alineación para tirar (`align` 0,9 → 1,6);
+  - más premio al avance (`progress` 0,6 → 1,2);
+  - menos pase genérico (`pass` 1 → 0,59) y menos conducción (`dribble` 0,8 → 0,33);
+  - reciclar atrás casi nada (`recycle` 0,3 → 0).
+- **Pero esa ventaja se paga en pases.** Al recuperar el peso del pase o el del tiro, la ventaja desaparece. Con esta física y esta recompensa, "más combinativo" y "más fuerte" tiran en direcciones opuestas.
+- **Uso posible más adelante:** un estilo de rival "directo" para el modo carrera, con los pesos de la media final.
+- **Para un tercer intento:** recompensar los pases que acaban en peligro (no los pases en sí), para que el autojuego busque la combinación que lleva a tiro.
+
+Pesos de la media final (estilo "directo"), por si se usan como rival del modo carrera:
+`{"pass":0.586,"dribble":0.332,"clear":0.502,"align":1.605,"quick":0.431,"firstTimeSlack":23.0,"execMargin":5.52,"progress":1.2,"recycle":0,"switchPlay":0.098,"supAdv":0.579,"supDist":1.429}`
