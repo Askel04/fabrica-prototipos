@@ -75,6 +75,13 @@ export const CONFIG = {
     hard: { theta: 1 },
     mate: { theta: 0.813 },
   },
+  // Estilos de rival (pesos de decisión sobre los de src/ai/brain.js), para el modo carrera.
+  // Se miden con tools/levels.mjs styles. directo: hallado por autojuego (fase 3, 2.º intento).
+  AI_STYLES: {
+    equilibrado: {},
+    directo: { pass: 0.586, dribble: 0.332, clear: 0.502, align: 1.605, quick: 0.431, firstTimeSlack: 23.0,
+      execMargin: 5.52, progress: 1.2, recycle: 0, switchPlay: 0.098, supAdv: 0.579, supDist: 1.429 },
+  },
 
 
   // Reglas

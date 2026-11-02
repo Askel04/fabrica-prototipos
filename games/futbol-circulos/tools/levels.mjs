@@ -6,6 +6,8 @@
 //                                                               nivel para que el de encima gane
 //                                                               ~70 % de los partidos decididos
 //                                                               (FROM='{"l4":0.66}': solo por debajo)
+//   node tools/levels.mjs styles [partidos=48] [minutos=3] [nivel=l6] → cada estilo de
+//                                                               CONFIG.AI_STYLES contra el equilibrado
 // Los partidos se reparten entre procesos hijos (uno por núcleo) con semillas fijas.
 import { spawn } from 'node:child_process';
 import { availableParallelism } from 'node:os';
@@ -31,13 +33,15 @@ function runJobs(jobs) {
 }
 
 // θ alto contra θ bajo: victorias, empates, derrotas (del alto) y medias por partido
-async function duel(hi, lo, games, minutes, seed0) {
-  const rows = await runJobs(Array.from({ length: games }, (_, k) => ({ hi, lo, minutes, seed: seed0 + k, hiRed: k % 2 === 0 })));
+// (sHi, sLo: estilos de CONFIG.AI_STYLES de cada lado; por defecto, equilibrado)
+async function duel(hi, lo, games, minutes, seed0, sHi = null, sLo = null) {
+  const rows = await runJobs(Array.from({ length: games }, (_, k) => ({ hi, lo, sHi, sLo, minutes, seed: seed0 + k, hiRed: k % 2 === 0 })));
   const w = rows.filter((r) => r.gh > r.gl).length, l = rows.filter((r) => r.gh < r.gl).length;
   const avg = (f) => +(rows.reduce((a, r) => a + f(r), 0) / rows.length).toFixed(2);
   return {
     w, d: games - w - l, l, win: w / Math.max(1, w + l),
     goles: `${avg((r) => r.gh)}-${avg((r) => r.gl)}`, tiros: `${avg((r) => r.th)}-${avg((r) => r.tl)}`, pases: `${avg((r) => r.ph)}-${avg((r) => r.pl)}`,
+    pasesPeligro: `${avg((r) => r.dh)}-${avg((r) => r.dl)}`,
   };
 }
 
@@ -46,6 +50,14 @@ const fmt = (r) => `${r.w}-${r.d}-${r.l} (${Math.round(r.win * 100)} % de los de
 async function main() {
   const [mode = 'table', games = 40, minutes = 3] = process.argv.slice(2).map((v, i) => (i ? Number(v) : v));
   const t0 = Date.now();
+  if (mode === 'styles') {
+    const lv = process.argv[5] || 'l6', th = C.AI_LEVELS[lv].theta;
+    for (const s of Object.keys(C.AI_STYLES).filter((k) => k !== 'equilibrado')) {
+      const r = await duel(th, th, games, minutes, 8000, s, 'equilibrado');
+      log(`${s} contra equilibrado (${lv}): ${fmt(r)} · pases que llevan a peligro ${r.pasesPeligro}`);
+    }
+    return;
+  }
   if (mode === 'calibrate') {
     // de arriba abajo: l6 = experto (θ = 1); cada nivel, el θ con el que el de encima gana ~70 %
     // FROM='{"l4":0.66}': rehacer solo los niveles por debajo de uno ya calibrado
@@ -96,9 +108,11 @@ if (process.argv[2] === '--levels-child') {
     const out = JSON.parse(buf).map((j) => {
       C.AI_LEVELS._hi = { theta: j.hi };
       C.AI_LEVELS._lo = { theta: j.lo };
-      const st = playGame({ minutes: j.minutes, seed: j.seed, levels: j.hiRed ? { red: '_hi', blue: '_lo' } : { red: '_lo', blue: '_hi' } });
+      const [sh, sl] = [j.sHi || 'equilibrado', j.sLo || 'equilibrado'];
+      const st = playGame({ minutes: j.minutes, seed: j.seed, levels: j.hiRed ? { red: '_hi', blue: '_lo' } : { red: '_lo', blue: '_hi' },
+        styles: j.hiRed ? { red: sh, blue: sl } : { red: sl, blue: sh } });
       const [h, l] = j.hiRed ? [st.red, st.blue] : [st.blue, st.red];
-      return { gh: h.goles, gl: l.goles, th: h.tiros, tl: l.tiros, ph: h.pasaBien, pl: l.pasaBien };
+      return { gh: h.goles, gl: l.goles, th: h.tiros, tl: l.tiros, ph: h.pasaBien, pl: l.pasaBien, dh: h.pasePeligro, dl: l.pasePeligro };
     });
     process.stdout.write(JSON.stringify(out));
   });

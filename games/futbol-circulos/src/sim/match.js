@@ -26,10 +26,11 @@ export class Match {
   // seats: humanos [{ team: 'red'|'blue', key, name }] (el resto de puestos son bots).
   //   Atajo: humanTeam 'red' = un humano local en rojo; null = todos bots.
   // levels: { red, blue } nombres de CONFIG.AI_LEVELS para los bots de cada equipo.
+  // styles: { red, blue } nombres de CONFIG.AI_STYLES (forma de jugar del equipo; por defecto equilibrado).
   // bots: false = cada equipo solo con sus humanos (online 1v1, 2v2, 1v2…).
   // localKey: puesto que maneja esta pantalla (anillo y controles).
   constructor({ humanTeam = 'red', seats = null, teamSize = 3, stadium = 'classic',
-    levels = { red: 'mate', blue: 'normal' }, weights = null, bots = true, localKey = 'local' } = {}) {
+    levels = { red: 'mate', blue: 'normal' }, weights = null, styles = null, bots = true, localKey = 'local' } = {}) {
     setStadium(stadium);
     syncField();
     this.teamSize = teamSize;
@@ -61,8 +62,8 @@ export class Match {
     this.humans = this.players.filter((p) => p.human);
     this.world.discs.push(...this.players.map((p) => p.disc), this.ball);
     this.brains = {
-      red: new TeamBrain(this, 'red', weights),
-      blue: new TeamBrain(this, 'blue', weights),
+      red: new TeamBrain(this, 'red', { ...weights, ...C.AI_STYLES[styles?.red] }),
+      blue: new TeamBrain(this, 'blue', { ...weights, ...C.AI_STYLES[styles?.blue] }),
     };
     this.levels = { ...levels };
     this.humanInput = this.inputs.get(localKey) || { x: 0, y: 0, kick: false };
