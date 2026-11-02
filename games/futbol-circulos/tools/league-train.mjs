@@ -11,6 +11,8 @@
 //   (números aleatorios comunes): las diferencias vienen de los pesos, no del azar.
 // - Puntuación: diferencia de goles + estilo (relativo a la IA por defecto), con castigo si el
 //   estilo empeora claramente.
+// - 3.er intento: premia los pases que llevan a peligro, castiga pasar menos que la referencia y
+//   juega también contra el estilo "directo" del 2.º.
 // - Puntuación densa (2.º intento): además de goles, tiros a puerta, posesión peligrosa y
 //   recuperaciones en campo rival; los 2 mejores de cada generación se reevalúan con semillas nuevas.
 // - Guarda el mejor en tools/.league-best.json (pasa a src/ai/weights.js solo si supera la
@@ -27,13 +29,17 @@ const STATE = new URL('./.league-state.json', import.meta.url);
 const BEST_OUT = new URL('./.league-best.json', import.meta.url);
 
 // pesos que se entrenan y su rango
-// Segundo intento: solo los 12 pesos con más efecto o con tendencia clara en el primero (menos
+// Solo los pesos con más efecto o con tendencia clara en los intentos anteriores (menos
 // dimensiones = menos partidos para la misma precisión). El resto se queda en su valor por defecto.
+// Tercer intento: además supPass y space (ofrecerse para el pase y pases al hueco).
 const SPACE = {
   pass: [0.3, 1.6], dribble: [0.3, 1.8], clear: [0.05, 1], align: [0.5, 2.2], quick: [0, 2],
   firstTimeSlack: [8, 45], execMargin: [-2, 14], progress: [0, 1.2], recycle: [0, 0.9], switchPlay: [0, 0.6],
-  supAdv: [0.2, 2.2], supDist: [0.3, 2.5],
+  supAdv: [0.2, 2.2], supDist: [0.3, 2.5], supPass: [0.8, 3.5], space: [0, 2],
 };
+// estilo "directo" (media final del 2.º intento): gana jugando directo; va en la liga como rival
+const DIRECTO = { pass: 0.586, dribble: 0.332, clear: 0.502, align: 1.605, quick: 0.431, firstTimeSlack: 23.0, execMargin: 5.52,
+  progress: 1.2, recycle: 0, switchPlay: 0.098, supAdv: 0.579, supDist: 1.429 };
 const KEYS = Object.keys(SPACE);
 const toW = (x) => Object.fromEntries(KEYS.map((k, i) => {
   const [lo, hi] = SPACE[k];
@@ -91,7 +97,9 @@ function score(rows, base) {
   const gd = diff('goles');
   // señal densa (los goles solos son demasiado escasos en partidos cortos): tiros a puerta, segundos
   // de posesión peligrosa (último tercio rival) y recuperaciones en campo rival, contra el rival
-  const dense = 0.3 * diff('tiros') + 0.1 * (diff('peligro') / 60 / 10) + 0.1 * diff('recupRival');
+  // 3.er intento: el peligro sin más pesa la mitad (empujaba a jugar directo) y se premian los pases
+  // que llevan a peligro (tiro a puerta o entrada en el último tercio ≤ 3 s después)
+  const dense = 0.3 * diff('tiros') + 0.05 * (diff('peligro') / 60 / 10) + 0.1 * diff('recupRival') + 0.6 * diff('pasePeligro');
   const st = style(rows);
   const rel = (k) => (st[k] - base[k]) / Math.max(1e-6, base[k]);
   // a favor: pases, pases adelante, tiros; en contra: pérdidas y bola de jugadores
@@ -99,6 +107,8 @@ function score(rows, base) {
   // castigo si alguna faceta empeora claramente (no ganar "a cualquier precio")
   for (const k of ['pases', 'adelante', 'tiros']) if (st[k] < base[k] * 0.85) sc -= 0.5;
   for (const k of ['perdidas', 'bulto']) if (st[k] > base[k] * 1.2) sc -= 0.5;
+  // castigo fuerte si pasa menos que la IA de referencia (más de un 5 %): ganar sin combinar no vale
+  sc -= 20 * Math.max(0, -0.05 - rel('pases'));
   return { sc, gd, st, dense };
 }
 
@@ -184,7 +194,7 @@ async function main() {
     // la propia media también se evalúa (es la mejor estimación actual)
     cands.push({ x: [...cma.mean], z: null, isMean: true });
     // liga: por defecto, "solo conservar" y los últimos campeones
-    const league = [base0, conserve, ...st.champions.slice(-3)];
+    const league = [base0, conserve, DIRECTO, ...st.champions.slice(-3)];
     const jobsFor = (w) => Array.from({ length: games }, (_, k) => ({
       wCand: w, wOpp: league[k % league.length], candRed: k % 2 === 0, seed: g * 1000 + k, minutes,
     }));

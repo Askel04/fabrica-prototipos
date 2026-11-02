@@ -9,6 +9,8 @@
 //  - espaciado: % del tiempo con ≥ 3 compañeros a menos de 100 del balón
 //  - dominio: ticks de posesión peligrosa (último toque propio y balón en el último tercio rival) y
 //    recuperaciones en campo rival (señales más densas que los goles para el autojuego)
+//  - pases que llevan a peligro: pase bueno tras el cual, en ≤ 3 s y sin que toque un rival, el
+//    equipo tira a puerta o entra en el último tercio rival (premia combinar con intención)
 //  - goles por partido
 // Uso: node tools/decisions.mjs [partidos=16] [minutos=3] [pesos JSON={}] [nivel=hard] [procesos=4]
 // Los pesos se aplican a los dos equipos (para comparar estilos de juego, no fuerza).
@@ -22,7 +24,7 @@ import { CONFIG as C } from '../src/config.js';
 
 const FIELDS = ['recepciones', 'pasaBien', 'pasaMal', 'pierdeAntes', 'tiroOdespeje', 'presOport', 'presOk',
   'adelanteBien', 'atrasBien', 'huecoIntentos', 'huecoBien', 'tiros', 'bulto', 'muestras', 'goles',
-  'peligro', 'recupRival'];
+  'peligro', 'recupRival', 'pasePeligro'];
 const zero = () => Object.fromEntries(FIELDS.map((k) => [k, 0]));
 
 // Engancha las métricas a un partido. Devuelve { st: { red, blue }, after() }: after() se llama
@@ -31,6 +33,14 @@ export function instrument(m) {
   const st = { red: zero(), blue: zero() };
   const other = (t) => (t === 'red' ? 'blue' : 'red');
   let cur = null, pending = null, press = null;
+  // pases buenos aún "abiertos" por equipo (ticks en que llegaron): se cobran con un tiro a puerta
+  // o al entrar en el último tercio rival; un toque rival o 3 s sin peligro los cierran
+  const open = { red: [], blue: [] };
+  const cash = (team) => {
+    st[team].pasePeligro += open[team].filter((t) => m.tick - t <= 180).length;
+    open[team] = [];
+  };
+  let lastX = 0;
   const touch = m.touch.bind(m);
   m.touch = (p) => {
     const prev = m.lastTouch;
@@ -38,13 +48,14 @@ export function instrument(m) {
       if (pending && p !== pending.p) {
         const s = st[pending.p.team];
         const good = p.team === pending.p.team;
-        if (good) s.pasaBien++; else s.pasaMal++;
+        if (good) { s.pasaBien++; open[p.team].push(m.tick); } else s.pasaMal++;
         const dx = (m.ball.x - pending.x0) * pending.p.attack;
         if (good && dx >= 60) s.adelanteBien++;
         if (good && dx <= -40) s.atrasBien++;
         if (pending.kind === 'space' && good) s.huecoBien++;
         pending = null;
       }
+      open[other(p.team)] = [];
       if (cur && cur !== p) { if (p.team !== cur.team) st[cur.team].pierdeAntes++; cur = null; }
       if (prev && prev.team !== p.team && m.ball.x * p.attack > 0) st[p.team].recupRival++;
       if (prev && prev.team === p.team) {
@@ -68,7 +79,7 @@ export function instrument(m) {
     }
     // tiro a puerta: cualquier golpeo cuya trayectoria prevista acaba dentro de la portería rival
     const b = m.ball, path = trajectory(b.x, b.y, b.vx, b.vy, 150);
-    if (path[path.length - 1].goal === p.attack) s.tiros++;
+    if (path[path.length - 1].goal === p.attack) { s.tiros++; cash(p.team); }
   };
   const after = () => {
     if (press && !press.ok) {
@@ -77,7 +88,11 @@ export function instrument(m) {
     }
     if (press?.ok) { st[other(press.p.team)].presOk++; press = null; }
     const lt = m.lastTouch;
-    if (lt && m.state === 'play' && m.ball.x * lt.attack > C.FIELD_W / 3) st[lt.team].peligro++;
+    if (lt && m.state === 'play' && m.ball.x * lt.attack > C.FIELD_W / 3) {
+      st[lt.team].peligro++;
+      if (lastX * lt.attack <= C.FIELD_W / 3) cash(lt.team); // acaba de entrar en el último tercio
+    }
+    lastX = m.ball.x;
     if (m.tick % 10 === 0 && m.state === 'play') {
       for (const team of ['red', 'blue']) {
         const n = m.players.filter((q) => q.team === team && Math.hypot(q.disc.x - m.ball.x, q.disc.y - m.ball.y) < 100).length;
@@ -139,6 +154,7 @@ export function summary(o) {
     atrasBuenosMin: perTeamMin(o.atrasBien),
     huecoMin: perTeamMin(o.huecoIntentos),
     huecoOk: pct(o.huecoBien, o.huecoIntentos),
+    pasePeligroMin: perTeamMin(o.pasePeligro),
     tirosPartido: +(o.tiros / Math.max(1, o.games)).toFixed(1),
     bulto: `${((o.bulto / Math.max(1, o.muestras)) * 100).toFixed(1)}%`,
   };
