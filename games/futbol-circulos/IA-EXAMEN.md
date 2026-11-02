@@ -292,3 +292,31 @@ Elo (l1 = 0): l2 215 · l3 439 · l4 686 · l5 734 · l6 854. La escalera está 
 Incluso l1 controla todos los balones y llegan dos de cada tres pases: juega peor, no torpe. Lo que más se degrada es conducir, girarse y superar al defensor.
 
 **Rendimiento en el navegador** (5v5, 20 s): Fácil 59,6 FPS, Normal 59,9, Difícil 58,5. Tick medio de 0,74 a 1,06 ms. 0 errores. Online local sin errores.
+
+## Fase 3 — tercer intento: pases que llevan a peligro (2026-11-02)
+
+**Métrica nueva** (`tools/decisions.mjs`, `pasePeligro`): pase bueno tras el cual, en ≤ 3 s y sin que toque un rival, el equipo tira a puerta o entra en el último tercio.
+
+**Recompensa:** goles + 0,3·Δtiros + 0,05·Δpeligro (la mitad que antes) + 0,1·Δrecuperaciones + **0,6·Δpases que llevan a peligro**, y castigo de −20 × lo que pase por debajo del −5 % de pases buenos de la IA actual. 14 pesos (los 12 de antes + `supPass` y `space`). En la liga también juega el estilo "directo" del 2.º intento. 12 generaciones, unas 2 h 50 min.
+
+**Validación** (120 partidos de 3 min contra la IA actual, semillas nuevas):
+
+| Candidato | G-E-P | % de los decididos | Goles | Pases buenos/min | Pases a peligro/min | Pérdidas | Bulto |
+|---|---|---|---|---|---|---|---|
+| Mejor (gen. 5) | 55-28-37 | 60 % | 179-122 | 4,59 vs 5,38 (−15 %) | 0,281 vs 0,250 | 0,232 vs 0,252 | 0,032 vs 0,039 |
+| Media gen. 5 | 52-27-41 | 56 % | 156-118 | 4,24 vs 5,25 (−19 %) | 0,233 vs 0,217 | 0,253 vs 0,239 | 0,028 vs 0,038 |
+| Media final | 50-40-30 | 63 % | 161-112 | 3,70 vs 5,09 (−27 %) | 0,350 vs 0,231 | 0,251 vs 0,237 | 0,027 vs 0,041 |
+
+**Resultado: no se acepta ninguno.** Todos ganan y crean más peligro por pase, pero pasan un 15–27 % menos (el límite era −5 %). El castigo frenó la caída de pases (el mejor pasa más que el del 2.º intento), pero no lo bastante, y a lo largo de las generaciones la media volvió a deslizarse hacia conducir más (`dribble` 0,47 → 1,06) y pasar menos (`pass` 0,92 → 0,64). Conclusión de tres intentos: con estas pautas y esta física, **pasar menos y conducir/tirar más gana**. La IA combinativa de los pesos a mano se mantiene porque es la que se pidió (juega como un equipo), no porque sea la óptima. Ninguno vale como estilo "combinativo" (ninguno pasa más que la actual).
+
+## Estilos de rival (2026-11-02)
+
+`CONFIG.AI_STYLES` + opción `styles: { red, blue }` de `Match`: cada estilo son pesos que se aplican encima de los de siempre. De momento: `equilibrado` (la IA actual) y `directo` (media del 2.º intento). Sin menú: son para el modo carrera.
+
+Ficha (`node tools/levels.mjs styles 48 3`, ambos en l6):
+
+| Estilo | G-E-P contra equilibrado | % de los decididos | Goles | Tiros | Pases buenos | Pases a peligro |
+|---|---|---|---|---|---|---|
+| directo | 22-14-12 | 65 % | 1,33-0,94 | 5,79-4,10 | 13,7-15,6 | 1,13-0,56 |
+
+El directo es más fuerte que el equilibrado al mismo nivel; en el modo carrera conviene darle un θ algo menor o reservarlo para divisiones altas.
