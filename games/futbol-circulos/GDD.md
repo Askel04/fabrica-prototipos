@@ -10,7 +10,19 @@
 
 **Meta:** ninguna en el prototipo. Posible: ligas contra IA de dificultad creciente.
 
-**Modos:** menú principal con Un jugador (3v3 en el estadio clásico 740x340 o 5v5 en el grande 1100x480; dificultad) y Online.
+**Modos:** menú principal con Un jugador (3v3 o 5v5; dificultad) y Online.
+
+**Personalización (2026-11-03):** pantalla *Personalizar* (estadio, camiseta, dorsal; se guarda en el móvil). Online, el anfitrión elige estadio y camisetas de los dos equipos, y cada persona lleva su dorsal.
+- **Estadios** (`src/stadium.js`; el clásico escalado, ×1,45 en 5v5). La cámara sigue al balón con los jugadores del mismo tamaño que antes:
+  - **Barrio** ×1,2 (3v3 888×408): césped gastado, muro de hormigón con grafitis.
+  - **Municipal** ×1,35 (1000×460): franjas, valla blanca y banquillos.
+  - **Estadio** ×1,5 (1110×510): césped a cuadros, vallas de publicidad y gradas con público.
+- **Camisetas** (`CONFIG.KITS`): rojo, azul, blanco, negro, amarillo, morado, naranja y celeste, sin verde. El rival lleva una al azar que no choque (`src/kits.js`).
+- **Dorsales** 1–99: el tuyo lo eliges; los bots, al azar y sin repetir en el equipo.
+- **Efecto del campo grande** (IA contra IA, 40 partidos por estadio):
+  - más tiempo con el balón: 3v3 0,62 → 0,67–0,71 s; 5v5 0,67 → 0,80–0,95 s;
+  - menos amontonamiento: 3,3 % → 1,0–1,8 %;
+  - menos tiros y goles: 5v5 estadio 1,3 goles por partido de 3 min frente a 2,15.
 
 **Online (como Haxball, sin servidor ni base de datos propios):** solo funciona abriendo el artefacto en claude.ai (capacidad `room`); los amigos necesitan cuenta y que se les comparta el artefacto. Uno crea sala (código de 5 letras) y los demás se unen con él. En la sala cada uno elige Rojo/Azul/Espectador; el anfitrión elige 3v3/5v5, rellenar con bots o no (1v1, 2v2, 1v2… solo personas) y su dificultad. Anfitrión con autoridad: simula todo y publica instantáneas a 30/s por `presence`; los clientes mandan su mando por `presence` y dibujan interpolando ~80 ms (sin predicción local todavía). Si alguien se va, su puesto pasa a bot; si se va el anfitrión, se acaba. `?localnet` en la URL usa BroadcastChannel para probar con dos pestañas.
 
@@ -26,7 +38,7 @@
 - **Plan de IA (2026-10-27):** primero la técnica individual, medida con `tools/drills.mjs` (exámenes) y `tools/matchstats.mjs`; luego la organización por autojuego con pautas. Línea base y objetivos en `IA-EXAMEN.md`. Menú principal → *Ejercicios IA* para verlos jugar. **Fase 1 hecha:** la técnica (controlar, pasar, tirar, conducir, superar) la decide `src/ai/motor.js` ensayando jugadas con la propia física antes de hacerlas. **Fase 2 hecha:** pautas de decisión con peso ajustable (pase de primeras, suelta rápido, ¿me da tiempo?, ir a recibir, salta a presionar, apoyo corto); `tools/decisions.mjs` las mide en paralelo.
 - Herramientas: `tools/ladder.mjs` (liga + tabla de estilo), `tools/scenarios.mjs` (último hombre, pase pedido, paredes, presión, precisión de chute, rotación), `tools/play.mjs`, `tools/league-train.mjs` (autojuego de la fase 3), `tools/levels.mjs` (calibrado y tabla de la escalera de niveles). `?debug` en la URL dibuja el puesto en la rotación (1.º/2.º/3.º) y la tarea de cada jugador, la sombra del último hombre y el mapa de calor de desmarques.
 
-**Paleta (boceto, se cambiará en el pulido):** verde campo `#718c5a`, líneas `#c7e6bd`, rojo `#e56e56`, azul `#5689e5`, bordes negro `#000000`, balón blanco `#ffffff`.
+**Paleta (boceto, se cambiará en el pulido):** verde campo `#718c5a` (barrio `#5f7448`, estadio `#4f9a45`), líneas `#c7e6bd`, camisetas en `CONFIG.KITS` (rojo `#e56e56`, azul `#5689e5`…), bordes negro `#000000`, balón blanco `#ffffff`.
 
 **Qué hay que validar:** ¿se siente bien conducir y chutar con dos pulgares? ¿Se pide otra partida?
 

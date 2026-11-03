@@ -26,4 +26,5 @@
 | 2026-10-29 | Fase 3: entrenador por autojuego (sep-CMA-ES, liga, semillas comunes), entrenamiento de 1,6 h y validación | 2.5 |
 | 2026-10-30 | Fase 3, 2.º intento (recompensa densa, reevaluación, validación de 4 candidatos); fase 4: técnica por nivel, escalera calibrada l1–l6, examen por nivel | 2.5 |
 | 2026-11-02 | Fase 3, 3.er intento (métrica de pases que llevan a peligro, recompensa con castigo de pases, validación de 3 candidatos) y estilos de rival | 1.5 |
-| | **Total** | **41** |
+| 2026-11-03 | Personalización: 3 estadios más grandes con cámara que sigue al balón, camisetas, dorsales, pantalla Personalizar, sala online; comparación de estadios | 2 |
+| | **Total** | **43** |
