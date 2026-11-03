@@ -24,7 +24,7 @@ import { CONFIG as C } from '../src/config.js';
 
 const FIELDS = ['recepciones', 'pasaBien', 'pasaMal', 'pierdeAntes', 'tiroOdespeje', 'presOport', 'presOk',
   'adelanteBien', 'atrasBien', 'huecoIntentos', 'huecoBien', 'tiros', 'bulto', 'muestras', 'goles',
-  'peligro', 'recupRival', 'pasePeligro'];
+  'peligro', 'recupRival', 'pasePeligro', 'conBalon', 'conBalonN'];
 const zero = () => Object.fromEntries(FIELDS.map((k) => [k, 0]));
 
 // Engancha las métricas a un partido. Devuelve { st: { red, blue }, after() }: after() se llama
@@ -32,7 +32,9 @@ const zero = () => Object.fromEntries(FIELDS.map((k) => [k, 0]));
 export function instrument(m) {
   const st = { red: zero(), blue: zero() };
   const other = (t) => (t === 'red' ? 'blue' : 'red');
-  let cur = null, pending = null, press = null;
+  let cur = null, pending = null, press = null, curT = null;
+  // tiempo con el balón: ticks desde que un compañero lo recibe hasta que lo golpea o se lo roban
+  const held = (team) => { if (curT !== null) { st[team].conBalon += m.tick - curT; st[team].conBalonN++; curT = null; } };
   // pases buenos aún "abiertos" por equipo (ticks en que llegaron): se cobran con un tiro a puerta
   // o al entrar en el último tercio rival; un toque rival o 3 s sin peligro los cierran
   const open = { red: [], blue: [] };
@@ -56,11 +58,12 @@ export function instrument(m) {
         pending = null;
       }
       open[other(p.team)] = [];
-      if (cur && cur !== p) { if (p.team !== cur.team) st[cur.team].pierdeAntes++; cur = null; }
+      if (cur && cur !== p) { if (p.team !== cur.team) { st[cur.team].pierdeAntes++; held(cur.team); } cur = null; curT = null; }
       if (prev && prev.team !== p.team && m.ball.x * p.attack > 0) st[p.team].recupRival++;
       if (prev && prev.team === p.team) {
         st[p.team].recepciones++;
         cur = p;
+        curT = m.tick;
         const near = Math.min(...m.players.filter((q) => q.team !== p.team).map((q) => Math.hypot(q.disc.x - p.disc.x, q.disc.y - p.disc.y)));
         press = near < 120 ? { p, t: m.tick, ok: near < 60 } : null;
         if (press) st[other(p.team)].presOport++;
@@ -70,6 +73,7 @@ export function instrument(m) {
   };
   m.events.kick = (p) => {
     const s = st[p.team];
+    if (cur === p) held(p.team);
     if (cur === p) {
       if (p.act?.type === 'pass' || (p.firstTime && !p.firstTime.shot)) {
         pending = { p, x0: m.ball.x, kind: p.act?.kind };
@@ -106,11 +110,11 @@ export function instrument(m) {
 
 // Juega un partido 5v5 (o 3v3) con pesos por equipo y semilla opcional (mismo azar para todos los
 // que usen esa semilla: números aleatorios comunes). Devuelve las métricas por equipo.
-export function playGame({ minutes = 3, wRed = {}, wBlue = {}, level = 'hard', levels = null, styles = null, size = 5, seed = null }) {
+export function playGame({ minutes = 3, wRed = {}, wBlue = {}, level = 'hard', levels = null, styles = null, size = 5, seed = null, stadium = null }) {
   const real = Math.random;
   if (seed !== null) Math.random = seeded(seed);
   try {
-    const m = new Match({ humanTeam: null, teamSize: size, stadium: size >= 5 ? 'big' : 'classic', levels: levels || { red: level, blue: level }, styles });
+    const m = new Match({ humanTeam: null, teamSize: size, stadium: stadium || (size >= 5 ? 'big' : 'classic'), levels: levels || { red: level, blue: level }, styles });
     m.brains.red.w = { ...m.brains.red.w, ...wRed };
     m.brains.blue.w = { ...m.brains.blue.w, ...wBlue };
     const { st, after } = instrument(m);
@@ -155,6 +159,7 @@ export function summary(o) {
     huecoMin: perTeamMin(o.huecoIntentos),
     huecoOk: pct(o.huecoBien, o.huecoIntentos),
     pasePeligroMin: perTeamMin(o.pasePeligro),
+    conBalonS: +(o.conBalon / Math.max(1, o.conBalonN) / 60).toFixed(2),
     tirosPartido: +(o.tiros / Math.max(1, o.games)).toFixed(1),
     bulto: `${((o.bulto / Math.max(1, o.muestras)) * 100).toFixed(1)}%`,
   };

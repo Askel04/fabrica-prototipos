@@ -22,7 +22,7 @@ const KICKOFF_SPOTS = {
 };
 
 export class Match {
-  // teamSize: 3 | 5 · stadium: 'classic' | 'big'
+  // teamSize: 3 | 5 · stadium: nombre de STADIUMS (barrio, municipal, estadio; classic/big para herramientas)
   // seats: humanos [{ team: 'red'|'blue', key, name }] (el resto de puestos son bots).
   //   Atajo: humanTeam 'red' = un humano local en rojo; null = todos bots.
   // levels: { red, blue } nombres de CONFIG.AI_LEVELS para los bots de cada equipo.
@@ -31,7 +31,7 @@ export class Match {
   // localKey: puesto que maneja esta pantalla (anillo y controles).
   constructor({ humanTeam = 'red', seats = null, teamSize = 3, stadium = 'classic',
     levels = { red: 'mate', blue: 'normal' }, weights = null, styles = null, bots = true, localKey = 'local' } = {}) {
-    setStadium(stadium);
+    setStadium(stadium, teamSize);
     syncField();
     this.teamSize = teamSize;
     this.stadium = stadium;

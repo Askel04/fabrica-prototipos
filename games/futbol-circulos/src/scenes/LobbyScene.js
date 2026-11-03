@@ -2,10 +2,11 @@ import Phaser from 'phaser';
 import { CONFIG as C } from '../config.js';
 import { panel, label, segmented, button, FONT } from '../ui/widgets.js';
 import { net } from '../net/session.js';
-import { MODES } from '../stadium.js';
+import { MODES, STADIUMS, PLAYABLE } from '../stadium.js';
+import { kitById, nextKit } from '../kits.js';
 
 // Sala online (tipo Haxball): cada uno elige Rojo, Azul o Espectador; el anfitrión elige modo,
-// si se rellena con bots y su dificultad, y empieza. Los demás esperan y entran al partido solos.
+// estadio, camisetas (tocando la muestra de cada equipo), si se rellena con bots y su dificultad, y empieza. Los demás esperan y entran al partido solos.
 const TEAMS = [['red', 'ROJO', '#e56e56'], ['spec', 'ESPECTADORES', '#000000'], ['blue', 'AZUL', '#5689e5']];
 
 export class LobbyScene extends Phaser.Scene {
@@ -28,10 +29,23 @@ export class LobbyScene extends Phaser.Scene {
     // columnas de equipos con su botón para cambiarse
     this.cols = TEAMS.map(([team, name, color], i) => {
       const x = cx + (i - 1) * 290;
-      this.add.text(x, 92, name, { ...FONT, fontSize: '18px', color }).setOrigin(0.5, 0);
+      const title = this.add.text(x, 92, name, { ...FONT, fontSize: '18px', color }).setOrigin(0.5, 0);
+      let swatch = null;
+      if (team !== 'spec') {
+        // muestra de la camiseta: el anfitrión la toca para cambiarla (salta las que chocan con la otra)
+        swatch = this.add.graphics();
+        if (s.isHost) {
+          this.add.zone(x - 110, 86, 220, 32).setOrigin(0).setInteractive().on('pointerup', () => {
+            const k = [...s.lobby.kits], j = team === 'red' ? 0 : 1;
+            k[j] = nextKit(k[j], k[1 - j]);
+            s.setLobby({ kits: k });
+            this.refresh();
+          });
+        }
+      }
       const list = this.add.text(x, 120, '', { ...FONT, fontSize: '16px', fontStyle: 'normal', align: 'center', lineSpacing: 4 }).setOrigin(0.5, 0);
       button(this, x, 252, 160, team === 'spec' ? 'Mirar' : 'Unirme', () => s.setTeam(team), { h: 38, size: 16 });
-      return { team, list };
+      return { team, list, title, swatch, x };
     });
 
     // ajustes de la partida: el anfitrión los cambia, los demás los ven
@@ -45,7 +59,9 @@ export class LobbyScene extends Phaser.Scene {
       label(this, cx + 220, y - 30, 'DIFICULTAD DE LOS BOTS', 14);
       this.diffSeg = segmented(this, cx + 70, y, 300, () => L.diff, (v) => s.setLobby({ diff: v }),
         [['easy', 'Fácil'], ['normal', 'Normal'], ['hard', 'Difícil']], 36);
-      button(this, cx, y + 58, 200, 'EMPEZAR', () => this.start(), { h: 46, size: 20, fill: 0xc7e6bd });
+      segmented(this, cx - 370, y + 58, 330, () => L.stadium, (v) => s.setLobby({ stadium: v }),
+        PLAYABLE.map((id) => [id, STADIUMS[id].name]), 36);
+      button(this, cx + 220, y + 58, 200, 'EMPEZAR', () => this.start(), { h: 46, size: 20, fill: 0xc7e6bd });
     } else {
       this.info = label(this, cx, y, '', 17, 0.5, 0.5);
     }
@@ -61,6 +77,14 @@ export class LobbyScene extends Phaser.Scene {
   refresh() {
     const s = this.session;
     const roster = s.roster();
+    const kits = s.currentLobby()?.kits || ['rojo', 'azul'];
+    for (const { team, title, swatch, x } of this.cols) {
+      if (!swatch) continue;
+      const kit = kitById(kits[team === 'red' ? 0 : 1]);
+      title.setText(`${kit.name.toUpperCase()}${s.isHost ? ' ▸' : ''}`).setColor('#000000');
+      const tx = x - title.width / 2 - 18;
+      swatch.clear().fillStyle(kit.body, 1).fillCircle(tx, 103, 10).lineStyle(2, 0x000000, 1).strokeCircle(tx, 103, 10);
+    }
     for (const { team, list } of this.cols) {
       const names = roster.filter((r) => r.team === team).map((r) => `${r.host ? '★ ' : ''}${r.name}${r.me ? ' (tú)' : ''}`);
       list.setText(names.join('\n') || '—');
@@ -71,7 +95,7 @@ export class LobbyScene extends Phaser.Scene {
       this.diffSeg.setEnabled(L.bots);
     } else if (L) {
       this.sub.setText('Esperando a que el anfitrión (★) empiece la partida.');
-      this.info.setText(`${L.mode} · ${L.bots ? `con bots (${{ easy: 'fácil', normal: 'normal', hard: 'difícil' }[L.diff]})` : 'sin bots'}`);
+      this.info.setText(`${L.mode} · ${STADIUMS[L.stadium].name} · ${L.bots ? `con bots (${{ easy: 'fácil', normal: 'normal', hard: 'difícil' }[L.diff]})` : 'sin bots'}`);
     } else {
       this.sub.setText('Buscando la sala…');
       this.info.setText('');

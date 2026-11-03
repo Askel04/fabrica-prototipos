@@ -5,6 +5,8 @@ import { TouchControls } from '../input.js';
 import { settings } from '../settings.js';
 import { Match, DT_MS } from '../sim/match.js';
 import { MODES } from '../stadium.js';
+import * as St from '../stadium.js';
+import { kitById, rivalKit, pickNumbers, clampNumber, hex } from '../kits.js';
 import { encodeSnap, decodeSnap } from '../net/session.js';
 import { DRILLS, DrillRun } from '../drills/drills.js';
 import { SKILLSETS } from '../drills/skillsets.js';
@@ -38,11 +40,11 @@ export class GameScene extends Phaser.Scene {
       this.gameId = L.game;
       this.match = new Match({
         seats: L.seats.map(([key, team, name]) => ({ key, team, name })),
-        bots: L.bots, levels: { red: L.diff, blue: L.diff }, localKey: this.net.me, ...MODES[L.mode],
+        bots: L.bots, levels: { red: L.diff, blue: L.diff }, localKey: this.net.me, ...MODES[L.mode], stadium: L.stadium,
       });
     } else {
       const mode = MODES[settings.mode] || MODES['3v3'];
-      this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty }, ...mode });
+      this.match = new Match({ humanTeam: 'red', levels: { red: 'mate', blue: settings.difficulty }, ...mode, stadium: settings.stadium });
     }
     this.seq = { kick: 0, kicker: 0, post: 0 }; // contadores de eventos para los clientes
     this.snaps = [];
@@ -70,12 +72,20 @@ export class GameScene extends Phaser.Scene {
       passRequest: (h) => this.onPassRequest(h),
     };
 
+    this.setupKits();
     this.drawField();
     this.ballGfx = this.add.circle(0, 0, C.BALL_RADIUS, C.COLOR_BALL).setStrokeStyle(C.BORDER_WIDTH, C.COLOR_BORDER).setDepth(11);
     for (const p of this.players) {
-      p.color = p.team === 'red' ? C.COLOR_RED : C.COLOR_BLUE;
+      const kit = this.kits[p.team];
+      p.color = kit.body;
       p.gfx = this.add.circle(0, 0, C.PLAYER_RADIUS, p.color).setStrokeStyle(C.BORDER_WIDTH, C.COLOR_BORDER).setDepth(10);
-      if (p.parked) p.gfx.setVisible(false);
+      p.numText = this.add.text(0, 0, String(p.number), {
+        fontFamily: 'sans-serif', fontSize: '15px', fontStyle: 'bold', color: hex(kit.num),
+      }).setOrigin(0.5, 0.55).setDepth(10.5);
+      if (p.parked) {
+        p.gfx.setVisible(false);
+        p.numText.setVisible(false);
+      }
       if (this.net && p.human) {
         p.nameText = this.add.text(0, 0, p.name, {
           fontFamily: 'sans-serif', fontSize: '12px', fontStyle: 'bold', color: '#ffffff', stroke: '#000000', strokeThickness: 3,
@@ -138,14 +148,40 @@ export class GameScene extends Phaser.Scene {
     window.__game = this; // para pruebas y depuración
   }
 
+  // camisetas (solo dibujo) y dorsales de cada jugador
+  setupKits() {
+    let kits, nums;
+    if (this.net) {
+      const L = this.lobby;
+      kits = L.kits;
+      nums = L.nums;
+    } else if (this.drillRun) {
+      kits = ['rojo', 'azul'];
+    } else {
+      kits = [settings.kit, rivalKit(settings.kit)];
+    }
+    this.kits = { red: kitById(kits[0]), blue: kitById(kits[1]) };
+    for (const team of ['red', 'blue']) {
+      const members = this.players.filter((p) => p.team === team);
+      const given = nums?.[team];
+      const wanted = members.map((p, i) => (given?.[i] != null ? given[i] : p === this.match.human ? clampNumber(settings.number) : null));
+      pickNumbers(wanted).forEach((n, i) => { members[i].number = n; });
+    }
+  }
+
   // Coloca cámara y HUD según el tamaño visible (EXPAND cambia el ancho/alto del lienzo).
   layout() {
-    const { width } = this.scale.gameSize;
-    // zoom para que quepa el estadio entero (1 en el clásico; menos en el grande)
-    const { height } = this.scale.gameSize;
-    const zoom = Math.min(1, width / (2 * C.OUTER_W + 20), height / (2 * C.OUTER_H + 40));
-    this.cameras.main.setZoom(zoom);
-    this.cameras.main.centerOn(0, -C.VIEW_OFFSET_Y / zoom);
+    const { width, height } = this.scale.gameSize;
+    if (this.drillRun) {
+      // ejercicios: el estadio entero
+      const zoom = Math.min(1, width / (2 * C.OUTER_W + 20), height / (2 * C.OUTER_H + 40));
+      this.cameras.main.setZoom(zoom);
+      this.cameras.main.centerOn(0, -C.VIEW_OFFSET_Y / zoom);
+    } else {
+      // partido: zoom fijo (jugadores del mismo tamaño que en el campo clásico) y la cámara sigue al balón
+      this.cameras.main.setZoom((height / C.HEIGHT) * (this.match.teamSize >= 5 ? C.CAM_ZOOM_5 : C.CAM_ZOOM_3));
+      this.followCamera(true);
+    }
     this.uiCam?.setSize(width, height);
     this.scoreText.setX(width / 2);
     this.drillText?.setPosition(width / 2, height - 8);
@@ -213,24 +249,112 @@ export class GameScene extends Phaser.Scene {
     } else this.scene.start('Title');
   }
 
+  // entorno del estadio, fuera de la zona de juego (formas, sin arte)
+  drawSurroundings(kind) {
+    const g = this.add.graphics().setDepth(-1);
+    const OW = C.OUTER_W, OH = C.OUTER_H;
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    if (kind === 'wall') {
+      // muro de hormigón con juntas
+      const t = 26;
+      g.fillStyle(0x9a9a92, 1);
+      g.fillRect(-OW - t, -OH - t, 2 * (OW + t), 2 * (OH + t));
+      g.lineStyle(1, 0x6f6f68, 1);
+      for (let x = -OW - t; x < OW + t; x += 48) {
+        g.lineBetween(x, -OH - t, x, -OH);
+        g.lineBetween(x, OH, x, OH + t);
+      }
+      for (let y = -OH; y < OH; y += 48) {
+        g.lineBetween(-OW - t, y, -OW, y);
+        g.lineBetween(OW, y, OW + t, y);
+      }
+      // grafitis: manchas de color en el muro
+      const cols = [0xe56e56, 0x5689e5, 0xf2d43c, 0x8a56d6];
+      for (let i = 0; i < 10; i++) {
+        g.fillStyle(cols[i % cols.length], 0.7);
+        g.fillRoundedRect(-OW + rnd() * 2 * OW, (i % 2 ? OH + 6 : -OH - t + 6), 30 + rnd() * 40, t - 12, 6);
+      }
+    } else if (kind === 'fence') {
+      // valla blanca con postes y dos banquillos
+      g.lineStyle(3, 0xf2f2f2, 0.9);
+      g.strokeRect(-OW - 10, -OH - 10, 2 * (OW + 10), 2 * (OH + 10));
+      g.fillStyle(0xf2f2f2, 1);
+      for (let x = -OW - 10; x <= OW + 10; x += 40) {
+        g.fillRect(x - 2, -OH - 14, 4, 8);
+        g.fillRect(x - 2, OH + 6, 4, 8);
+      }
+      for (const sx of [-1, 1]) {
+        g.fillStyle(0x3c5a8a, 1);
+        g.fillRoundedRect(sx * 180 - 60, -OH - 46, 120, 26, 6);
+        g.fillStyle(0xffffff, 0.35);
+        g.fillRoundedRect(sx * 180 - 54, -OH - 42, 108, 8, 3);
+      }
+    } else if (kind === 'stands') {
+      // vallas de publicidad y gradas con público
+      const ad = 14, ads = [0xe56e56, 0xffffff, 0x5689e5, 0xf2d43c];
+      let k = 0;
+      for (let x = -OW - ad; x < OW + ad; x += 90, k++) {
+        g.fillStyle(ads[k % ads.length], 1);
+        g.fillRect(x, -OH - ad, 90, ad - 2);
+        g.fillStyle(ads[(k + 2) % ads.length], 1);
+        g.fillRect(x, OH + 2, 90, ad - 2);
+      }
+      const gap = ad + 8, depth = 120;
+      g.fillStyle(0x44485a, 1);
+      g.fillRect(-OW - gap - depth, -OH - gap - depth, 2 * (OW + gap + depth), depth);
+      g.fillRect(-OW - gap - depth, OH + gap, 2 * (OW + gap + depth), depth);
+      g.fillRect(-OW - gap - depth, -OH - gap, depth, 2 * (OH + gap));
+      g.fillRect(OW + gap, -OH - gap, depth, 2 * (OH + gap));
+      const crowd = [0xe56e56, 0x5689e5, 0xf2f2f2, 0xf2d43c, 0x2b2b2b, 0xf09a3a, 0x8fd3f4];
+      const step = 13;
+      for (let x = -OW - gap - depth + 6; x < OW + gap + depth - 6; x += step) {
+        for (let y = -OH - gap - depth + 6; y < OH + gap + depth - 6; y += step) {
+          const inside = x > -OW - gap && x < OW + gap && y > -OH - gap && y < OH + gap;
+          if (inside || rnd() < 0.15) continue;
+          g.fillStyle(crowd[Math.floor(rnd() * crowd.length)], 1);
+          g.fillRect(x, y, 8, 8);
+        }
+      }
+    }
+  }
+
   drawField() {
     const g = this.add.graphics().setDepth(0);
-    const W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF, D = C.GOAL_DEPTH;
-    g.fillStyle(C.COLOR_FIELD, 1);
-    g.fillRect(-1500, -1000, 3000, 2000); // fondo de sobra para cualquier proporción de pantalla
-    g.fillStyle(0x000000, 0.12);
-    g.fillRect(-1500, -1000, 3000, 2000);
-    g.fillStyle(C.COLOR_FIELD, 1);
-    g.fillRect(-C.OUTER_W, -C.OUTER_H, C.OUTER_W * 2, C.OUTER_H * 2);
-    // franjas de césped
-    g.fillStyle(0x000000, 0.06);
-    for (let i = 0; i < 8; i += 2) g.fillRect(-W + (i * W) / 4, -H, W / 4, H * 2);
-    g.lineStyle(3, C.COLOR_LINES, 1);
+    const S = St.stadium;
+    const W = C.FIELD_W, H = C.FIELD_H, G = C.GOAL_HALF, D = C.GOAL_DEPTH, OW = C.OUTER_W, OH = C.OUTER_H;
+    this.add.rectangle(0, 0, 6000, 4000, S.outside).setDepth(-2); // fondo de sobra para cualquier proporción de pantalla
+    if (S.deco) this.drawSurroundings(S.deco);
+    g.fillStyle(S.grass, 1);
+    g.fillRect(-OW, -OH, OW * 2, OH * 2);
+    // franjas (o cuadros) de césped
+    if (S.stripes) {
+      g.fillStyle(0x000000, S.stripes);
+      const n = 8, sw = (2 * OW) / n, rows = S.checks ? 6 : 1, sh = (2 * OH) / rows;
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < rows; j++) if ((i + j) % 2 === 0) g.fillRect(-OW + i * sw, -OH + j * sh, sw, sh);
+      }
+    }
+    if (S.deco === 'wall') {
+      // césped gastado: calvas de tierra delante de las porterías y en el centro
+      g.fillStyle(0x8a7a52, 0.45);
+      for (const sx of [-1, 1]) g.fillEllipse(sx * (W - 40), 0, 90, G * 1.6);
+      g.fillEllipse(0, 0, 70, 50);
+    }
+    g.lineStyle(3, S.lines, 1);
     g.strokeRect(-W, -H, W * 2, H * 2);
     g.lineBetween(0, -H, 0, H);
     g.strokeCircle(0, 0, C.CENTER_RADIUS);
-    g.fillStyle(C.COLOR_LINES, 1);
+    g.fillStyle(S.lines, 1);
     g.fillCircle(0, 0, 3);
+    if (S.deco) {
+      // áreas (solo dibujo)
+      for (const sx of [-1, 1]) {
+        const aw = W * 0.18, ah = G * 2.1;
+        g.strokeRect(sx > 0 ? W - aw : -W, -ah, aw, ah * 2);
+        g.fillCircle(sx * (W - aw * 0.75), 0, 3);
+      }
+    }
     // redes
     g.lineStyle(2, 0x000000, 0.8);
     for (const s of [-1, 1]) {
@@ -465,7 +589,7 @@ export class GameScene extends Phaser.Scene {
     navigator.vibrate?.([40, 40, 80]);
     beep(C.SOUND_GOAL, 0.12);
     this.time.delayedCall(130, () => beep(C.SOUND_GOAL * 1.25, 0.18));
-    const color = scorer === 'red' ? '#e56e56' : '#5689e5';
+    const color = hex(this.kits[scorer].body);
     this.goalText.setColor(color).setVisible(true).setScale(0.3).setAlpha(1);
     this.tweens.add({ targets: this.goalText, scale: 1, duration: 300, ease: 'Back.Out' });
     this.tweens.add({ targets: this.goalText, alpha: 0, delay: C.GOAL_PAUSE_MS - 400, duration: 300,
@@ -521,13 +645,39 @@ export class GameScene extends Phaser.Scene {
 
   updateScore() {
     if (this.drillRun) return;
-    this.scoreText.setText(`ROJO ${this.score.red} - ${this.score.blue} AZUL`);
+    const n = (t) => this.kits[t].name.toUpperCase();
+    this.scoreText.setText(`${n('red')} ${this.score.red} - ${this.score.blue} ${n('blue')}`);
+  }
+
+  // cámara: va hacia el balón (algo adelantada) sin salirse del estadio; en el saque, al centro
+  followCamera(snap = false) {
+    const cam = this.cameras.main, z = cam.zoom;
+    const { width, height } = this.scale.gameSize;
+    const b = this.ball, kickoff = this.match.state === 'kickoff';
+    let tx = kickoff ? 0 : b.x + (b.vx || 0) * C.CAM_LEAD, ty = kickoff ? 0 : b.y + (b.vy || 0) * C.CAM_LEAD;
+    const off = -C.VIEW_OFFSET_Y / z; // sitio para el marcador
+    const lim = (t, half, outer) => {
+      const m = outer + C.CAM_MARGIN - half;
+      return m <= 0 ? 0 : Math.max(-m, Math.min(m, t));
+    };
+    tx = lim(tx, width / (2 * z), C.OUTER_W);
+    ty = lim(ty, height / (2 * z), C.OUTER_H + C.VIEW_OFFSET_Y / z) + off;
+    if (snap || this.camX === undefined) [this.camX, this.camY] = [tx, ty];
+    else {
+      this.camX += (tx - this.camX) * C.CAM_LERP;
+      this.camY += (ty - this.camY) * C.CAM_LERP;
+    }
+    cam.centerOn(this.camX, this.camY);
   }
 
   render(alpha) {
     const lerp = (d, o) => o.setPosition(d.px + (d.x - d.px) * alpha, d.py + (d.y - d.py) * alpha);
     lerp(this.ball, this.ballGfx);
-    for (const p of this.players) lerp(p.disc, p.gfx);
+    for (const p of this.players) {
+      lerp(p.disc, p.gfx);
+      p.numText.setPosition(p.gfx.x, p.gfx.y);
+    }
+    if (!this.drillRun) this.followCamera();
     for (const p of this.players) p.nameText?.setPosition(p.gfx.x, p.gfx.y - C.PLAYER_RADIUS - 3);
     const h = this.human;
     h?.ring.setPosition(h.gfx.x, h.gfx.y).setAlpha(h.input.kick ? C.RING_ALPHA_KICK : C.RING_ALPHA_IDLE);

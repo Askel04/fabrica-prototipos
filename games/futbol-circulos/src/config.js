@@ -97,6 +97,24 @@ export const CONFIG = {
   BORDER_WIDTH: 2,
   RING_ALPHA_IDLE: 0.25,
   RING_ALPHA_KICK: 0.9,
+  // Cámara: sigue al balón con este zoom (×alto de pantalla/440; en 5v5 algo más lejos)
+  CAM_ZOOM_3: 1,
+  CAM_ZOOM_5: 0.8,
+  CAM_LERP: 0.1,
+  CAM_LEAD: 12, // ticks de adelanto según la velocidad del balón
+  CAM_MARGIN: 40, // la cámara no pasa de OUTER + esto
+
+  // Camisetas: color del círculo y del dorsal (sin verde, que se confunde con el césped)
+  KITS: [
+    { id: 'rojo', name: 'Rojo', body: 0xe56e56, num: 0xffffff },
+    { id: 'azul', name: 'Azul', body: 0x5689e5, num: 0xffffff },
+    { id: 'blanco', name: 'Blanco', body: 0xf2f2f2, num: 0x222222 },
+    { id: 'negro', name: 'Negro', body: 0x2b2b2b, num: 0xffffff },
+    { id: 'amarillo', name: 'Amarillo', body: 0xf2d43c, num: 0x222222 },
+    { id: 'morado', name: 'Morado', body: 0x8a56d6, num: 0xffffff },
+    { id: 'naranja', name: 'Naranja', body: 0xf09a3a, num: 0x222222 },
+    { id: 'celeste', name: 'Celeste', body: 0x8fd3f4, num: 0x222222 },
+  ],
 
   // Juice
   VIBRATE_MS: 20,

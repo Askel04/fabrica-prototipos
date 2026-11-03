@@ -53,7 +53,8 @@ export class TitleScene extends Phaser.Scene {
     label(this, lx, top + 140, 'DIFICULTAD', 16, 0.5, 0);
     segmented(this, lx - 170, top + 184, 340, () => settings.difficulty, (v) => setSetting('difficulty', v),
       [['easy', 'Fácil'], ['normal', 'Normal'], ['hard', 'Difícil']]);
-    button(this, lx, top + 270, 200, 'JUGAR', () => this.scene.start('Game'), { h: 56, size: 24 });
+    button(this, lx - 88, top + 270, 180, 'JUGAR', () => this.scene.start('Game'), { h: 56, size: 24 });
+    button(this, lx + 98, top + 270, 170, 'Personalizar', () => this.scene.start('Customize'), { h: 56, size: 18 });
 
     // ---- online ----
     const rx = cx + pw / 2 + 12;

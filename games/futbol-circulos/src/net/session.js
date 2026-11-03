@@ -1,10 +1,14 @@
 // Sesión online: una sala `fc-<código>` en la que el anfitrión manda (como en Haxball).
 // Presencia de cada participante:
-//   todos:        { n: apodo, t: 'red'|'blue'|'spec', h: 1 si es el anfitrión, in: [x, y, chute] }
-//   anfitrión:    + lobby: { mode, bots, diff, phase: 'lobby'|'play', game, seats: [[peer, equipo, apodo]] }
+//   todos:        { n: apodo, no: dorsal, t: 'red'|'blue'|'spec', h: 1 si es el anfitrión, in: [x, y, chute] }
+//   anfitrión:    + lobby: { mode, bots, diff, stadium, kits: [rojo, azul], phase: 'lobby'|'play', game,
+//                            seats: [[peer, equipo, apodo]], nums: { red: [...], blue: [...] } (dorsales por puesto) }
 //                 + s: instantánea del partido (ver encodeSnap)
 // Todo lo que llega de otros es texto/números no fiables: se valida y solo se muestra.
 import { openTransport, newRoomCode } from './transport.js';
+import { settings } from '../settings.js';
+import { PLAYABLE } from '../stadium.js';
+import { kitById, kitsClash, rivalKit, pickNumbers, clampNumber } from '../kits.js';
 
 export const net = { session: null }; // la sesión activa (una a la vez)
 
@@ -33,8 +37,11 @@ export class NetSession {
     this.kind = kind;
     this.nick = nick;
     this.team = isHost ? 'red' : 'spec';
-    this.lobby = isHost ? { mode: '3v3', bots: true, diff: 'normal', phase: 'lobby', game: 0, seats: [] } : null;
-    room.presence({ n: nick, t: this.team, h: isHost ? 1 : 0, in: [0, 0, 0], ...(isHost ? { lobby: { ...this.lobby } } : {}) });
+    this.lobby = isHost ? {
+      mode: '3v3', bots: true, diff: 'normal', stadium: settings.stadium, kits: [settings.kit, rivalKit(settings.kit)],
+      phase: 'lobby', game: 0, seats: [], nums: null,
+    } : null;
+    room.presence({ n: nick, no: clampNumber(settings.number), t: this.team, h: isHost ? 1 : 0, in: [0, 0, 0], ...(isHost ? { lobby: { ...this.lobby } } : {}) });
     net.session = this;
   }
 
@@ -59,6 +66,9 @@ export class NetSession {
       mode: l.mode === '5v5' ? '5v5' : '3v3',
       bots: !!l.bots,
       diff: ['easy', 'normal', 'hard'].includes(l.diff) ? l.diff : 'normal',
+      stadium: PLAYABLE.includes(l.stadium) ? l.stadium : 'municipal',
+      kits: validKits(l.kits),
+      nums: l.nums && typeof l.nums === 'object' ? { red: validNums(l.nums.red), blue: validNums(l.nums.blue) } : null,
       phase: l.phase === 'play' ? 'play' : 'lobby',
       game: Number(l.game) || 0,
       seats: Array.isArray(l.seats) ? l.seats.filter((s) => Array.isArray(s) && typeof s[0] === 'string' &&
@@ -83,17 +93,23 @@ export class NetSession {
       me: p.isMe,
       host: p.presence.h === 1,
       name: cleanName(p.presence.n),
+      no: clampNumber(p.presence.no),
       team: ['red', 'blue'].includes(p.presence.t) ? p.presence.t : 'spec',
     })).sort((a, b) => (b.host - a.host) || (a.peer < b.peer ? -1 : 1));
   }
 
   // el anfitrión reparte los puestos y arranca la partida
+  // (y los dorsales: el de cada persona; repetidos y bots, uno libre al azar)
   start(teamSize) {
-    const seats = [];
+    const seats = [], nums = {};
     for (const team of ['red', 'blue']) {
-      this.roster().filter((r) => r.team === team).slice(0, teamSize).forEach((r) => seats.push([r.peer, team, r.name]));
+      const people = this.roster().filter((r) => r.team === team).slice(0, teamSize);
+      people.forEach((r) => seats.push([r.peer, team, r.name]));
+      const wanted = people.map((r) => r.no);
+      while (this.lobby.bots && wanted.length < teamSize) wanted.push(null);
+      nums[team] = pickNumbers(wanted);
     }
-    this.setLobby({ phase: 'play', game: this.lobby.game + 1, seats });
+    this.setLobby({ phase: 'play', game: this.lobby.game + 1, seats, nums });
   }
 
   sendInput(x, y, kick) {
@@ -119,6 +135,16 @@ export class NetSession {
     if (net.session === this) net.session = null;
     return this.room.leave();
   }
+}
+
+function validKits(k) {
+  if (!Array.isArray(k)) return ['rojo', 'azul'];
+  const [a, b] = [kitById(k[0]).id, kitById(k[1]).id];
+  return kitsClash(a, b) ? ['rojo', 'azul'] : [a, b];
+}
+
+function validNums(a) {
+  return Array.isArray(a) ? a.slice(0, 5).map(clampNumber) : [];
 }
 
 export function cleanName(n) {
